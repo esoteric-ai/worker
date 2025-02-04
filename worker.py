@@ -21,15 +21,14 @@ class WorkerClient:
         self.server_base_url: str = cfg.get("server_base_url", "http://localhost:8000")
         self.backend_type: str = cfg.get("backend", "TabbyAPI")
         self.supported_models: List[str] = cfg.get("models", ["llama8b"])
-
+        model_aliases = cfg.get("model_aliases", {})
         if self.backend_type == "TabbyAPI":
             tabby_api_url = cfg.get("tabby_api_url", "http://127.0.0.1")
             tabby_api_key = cfg.get("tabby_api_key", "")
-            self.backend: Backend = TabbyBackend(tabby_api_url, tabby_api_key)
+            self.backend: Backend = TabbyBackend(tabby_api_url, tabby_api_key, model_aliases, supported_models=self.supported_models)
         elif self.backend_type == "OllamaAPI":
             ollama_api_url = cfg.get("ollama_api_url", "http://localhost:11434")
-            # Optional mapping from internal names to Ollama model names.
-            model_aliases = cfg.get("model_aliases", {})
+            
             self.backend: Backend = OllamaBackend(ollama_api_url, model_aliases, supported_models=self.supported_models)
         else:
             raise ValueError(f"Unsupported backend: {self.backend_type}")
