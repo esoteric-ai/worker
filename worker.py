@@ -358,6 +358,7 @@ class WorkerClient:
         conversation = task.get("conversation", [])
         text = await self.backend.chat_completion(conversation)
         task["text"] = text
+        task["worker_name"] = self.worker_name
         return task
 
 
