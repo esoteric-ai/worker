@@ -70,7 +70,7 @@ class OllamaBackend(Backend):
         if api_model not in running_models:
             # Force the model to load by calling chat with an empty conversation.
             try:
-                await self.client.chat(api_model, messages=[])
+                await self.client.chat(api_model, messages=[], options={ "num_ctx": 8192, "num_predict": 700})
             except Exception as e:
                 print(f"[OllamaBackend] Error forcing load of model {api_model}:", e)
                 raise e
@@ -95,14 +95,19 @@ class OllamaBackend(Backend):
         if not self.api_model:
             raise ValueError("No active model loaded. Call load_model() first.")
 
+        print(conversation)
+
         try:
-            response = await self.client.chat(self.api_model, messages=conversation)
+            response = await self.client.chat(self.api_model, messages=conversation,
+                options={'temperature': 0, "num_ctx": 8192, "num_predict": 700})
         except ResponseError as re:
             print(f"[OllamaBackend] Response error from Ollama: {re}")
             raise re
         except Exception as e:
             print(f"[OllamaBackend] Unexpected error during chat_completion: {e}")
             raise e
+
+        print(response)
 
         # Try dictionary access first.
         if isinstance(response, dict):
