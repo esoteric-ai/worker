@@ -10,6 +10,7 @@ import httpx
 from backends.base import Backend
 from backends.tabby import TabbyBackend
 from backends.ollama import OllamaBackend
+from backends.openai import OpenAIBackend
 
 
 class WorkerClient:
@@ -30,6 +31,11 @@ class WorkerClient:
             ollama_api_url = cfg.get("ollama_api_url", "http://localhost:11434")
             
             self.backend: Backend = OllamaBackend(ollama_api_url, model_aliases, supported_models=self.supported_models)
+        elif self.backend_type == "OpenAIAPI":
+            openai_api_url = cfg.get("openai_api_url", "https://api.targon.com")
+            openai_api_key = cfg.get("openai_api_key", "")
+            openai_rpm = cfg.get("openai_rpm", -1)
+            self.backend: Backend = OpenAIBackend(openai_api_url, openai_api_key, model_aliases, supported_models=self.supported_models, rpm=openai_rpm)
         else:
             raise ValueError(f"Unsupported backend: {self.backend_type}")
 

@@ -1,18 +1,23 @@
 {
   "worker_name": "test-worker-1",
   "server_base_url": "http://127.0.0.1:6325",
-  "backend": "TabbyAPI",
-  "models": ["llama8b"],
+  "backend": "OpenAIAPI",
+  "models": ["llama70b"],
+  
 
   "model_aliases": {
-    "llama8b": "llama3.1:8b-instruct-q4_K_M"
+    "llama70b": "llama3.1:70b-instruct-q4_K_M"
   },
 
-  "batch_size": 10,
+  "batch_size": 1,
 
   "tabby_api_url": "http://127.0.0.1:35411",
   "tabby_api_key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 
-  "ollama_api_url": "http://127.0.0.1:35410"
+  "ollama_api_url": "http://127.0.0.1:35410",
+
+  "openai_api_url": "https://api.targon.com",  
+  "openai_api_key": "your_openai_api_key_here",
+  "openai_rpm" : 6
 
 }
