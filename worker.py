@@ -23,19 +23,23 @@ class WorkerClient:
         self.backend_type: str = cfg.get("backend", "TabbyAPI")
         self.supported_models: List[str] = cfg.get("models", ["llama8b"])
         model_aliases = cfg.get("model_aliases", {})
+
         if self.backend_type == "TabbyAPI":
             tabby_api_url = cfg.get("tabby_api_url", "http://127.0.0.1")
             tabby_api_key = cfg.get("tabby_api_key", "")
-            self.backend: Backend = TabbyBackend(tabby_api_url, tabby_api_key, model_aliases, supported_models=self.supported_models)
+            self.backend: Backend = TabbyBackend(
+                tabby_api_url, tabby_api_key, model_aliases, supported_models=self.supported_models
+            )
         elif self.backend_type == "OllamaAPI":
             ollama_api_url = cfg.get("ollama_api_url", "http://localhost:11434")
-            
             self.backend: Backend = OllamaBackend(ollama_api_url, model_aliases, supported_models=self.supported_models)
         elif self.backend_type == "OpenAIAPI":
             openai_api_url = cfg.get("openai_api_url", "https://api.targon.com")
             openai_api_key = cfg.get("openai_api_key", "")
             openai_rpm = cfg.get("openai_rpm", -1)
-            self.backend: Backend = OpenAIBackend(openai_api_url, openai_api_key, model_aliases, supported_models=self.supported_models, rpm=openai_rpm)
+            self.backend: Backend = OpenAIBackend(
+                openai_api_url, openai_api_key, model_aliases, supported_models=self.supported_models, rpm=openai_rpm
+            )
         else:
             raise ValueError(f"Unsupported backend: {self.backend_type}")
 
@@ -46,23 +50,21 @@ class WorkerClient:
         self.batch_size: int = cfg.get("batch_size", 20)
         self.buffer_size = self.batch_size
 
-        # Queue for inbound tasks
-        self.task_queue = asyncio.Queue()
-
-        # Queue for completed tasks
-        self.completed_queue = asyncio.Queue()
-
-        # Event used by the server to tell us new tasks are available
-        self.tasks_available_event = asyncio.Event()
+        # Remove async primitives initialization from __init__
+        self.task_queue: Optional[asyncio.Queue] = None
+        self.completed_queue: Optional[asyncio.Queue] = None
+        self.tasks_available_event: Optional[asyncio.Event] = None
+        self.ws_connected: Optional[asyncio.Event] = None
 
         self.processing_tasks = set()
-
-        # This event is set only when the websocket connection is active.
-        self.ws_connected = asyncio.Event()
-
-        # Reconnection schedule:
-        # 10 attempts every 5 seconds, 10 attempts every 60 seconds, then every 3600 seconds (1 hour) for 24 attempts.
         self.reconnect_schedule = [5] * 10 + [60] * 10 + [3600] * 24
+
+    async def init_async_primitives(self):
+        # Initialize all asyncio primitives on the current event loop.
+        self.task_queue = asyncio.Queue()
+        self.completed_queue = asyncio.Queue()
+        self.tasks_available_event = asyncio.Event()
+        self.ws_connected = asyncio.Event()
 
     async def producer_loop(self):
         """
@@ -154,6 +156,8 @@ class WorkerClient:
         starts the listen_forever loop, and if disconnected, waits for a delay
         (using the schedule) before trying to reconnect.
         """
+        await self.init_async_primitives()  # Initialize async objects on current event loop
+
         active_model = await self.backend.load_model()
         print(f"[Worker] Active model from backend: {active_model}")
 
@@ -166,7 +170,7 @@ class WorkerClient:
         ws_url = f"{self.server_base_url.replace('http', 'ws')}/worker/ws/{self.worker_uid}"
         print(f"[Worker] Will connect to WebSocket: {ws_url}")
 
-        # Start the persistent background tasks (which use send_request).
+        # Start background tasks.
         producer_task = asyncio.create_task(self.producer_loop())
         consumer_task = asyncio.create_task(self.consumer_loop())
         submit_task = asyncio.create_task(self.submit_loop())
@@ -181,7 +185,7 @@ class WorkerClient:
                     print("[Worker] WebSocket connection established.")
                     reconnect_attempt = 0  # Reset on successful connection
 
-                    # Run the listener loop on this connection. (It will return if the connection closes.)
+                    # Run the listener loop on this connection.
                     await self.listen_forever()
             except Exception as e:
                 print("[Worker] WebSocket connection error:", e)
@@ -326,11 +330,6 @@ class WorkerClient:
         """
         Send a JSON request to the server WebSocket with a request_id,
         and wait for the matching response.
-        
-        This method first waits until the connection is active.
-        If the send fails (or if the connection is lost before a response is received)
-        then the waiting future is cancelled so that the higher–level logic (e.g. re–queuing)
-        can take over.
         """
         # Wait until the websocket is connected.
         await self.ws_connected.wait()
