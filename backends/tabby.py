@@ -125,6 +125,13 @@ class TabbyBackend(Backend):
         try:
             cmd = [run_path] + (run_arguments.split() if run_arguments else [])
             
+            # Create kwargs for subprocess.Popen
+            kwargs = {'env': environment}
+            
+            # On Unix systems, create a new process group
+            if sys.platform != "win32":
+                import os
+                kwargs['preexec_fn'] = os.setsid
             
             self.process = subprocess.Popen(
                 cmd,
@@ -132,7 +139,7 @@ class TabbyBackend(Backend):
                 # stderr=subprocess.PIPE,
                 # shell=True,
                 # text=True
-                env=environment
+                **kwargs
             )
             
             print(f"[TabbyBackend] Started backend process with PID {self.process.pid}")
@@ -150,25 +157,41 @@ class TabbyBackend(Backend):
     async def stop(self):
         if not self.running:
             return
-
+        
         try:
             if sys.platform == "win32":
+                # On Windows, terminate the process
                 self.process.terminate()
             else:
+                # On Unix, kill the entire process group
                 import signal
-                self.process.send_signal(signal.SIGTERM)
-
+                import os
+                try:
+                    pgid = os.getpgid(self.process.pid)
+                    os.killpg(pgid, signal.SIGTERM)
+                except OSError:
+                    # Fallback to just the process if getting the process group fails
+                    self.process.send_signal(signal.SIGTERM)
+                    
             # Wait for a short time for graceful shutdown
-            #try:
-            #    # Run the blocking wait() in a thread to avoid blocking the event loop
-            #    loop = asyncio.get_event_loop()
-            #    await asyncio.wait_for(
-            #        loop.run_in_executor(None, self.process.wait),
-            #        timeout=2.5
-            #    )
-            #except asyncio.TimeoutError:
-            self.process.kill()
-
+            try:
+                # Run the blocking wait() in a thread to avoid blocking the event loop
+                loop = asyncio.get_event_loop()
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, self.process.wait),
+                    timeout=2.5
+                )
+            except asyncio.TimeoutError:
+                # Force kill if graceful shutdown fails
+                if sys.platform == "win32":
+                    self.process.kill()
+                else:
+                    try:
+                        pgid = os.getpgid(self.process.pid)
+                        os.killpg(pgid, signal.SIGKILL)
+                    except OSError:
+                        self.process.kill()
+                    
             print(f"[TabbyBackend] Process stopped")
             self.process = None
             self.running = False
