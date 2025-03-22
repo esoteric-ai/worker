@@ -126,7 +126,7 @@ class Backend(ABC):
             
             try:
                 # Use a timeout to prevent hanging
-                await asyncio.gather(*tasks, return_exceptions=True)
+                await asyncio.gather(*tasks) # , return_exceptions=True
                 success = True
             except Exception as e:
                 console.print(f"[bold red]Error with {count} parallel requests: {str(e)}[/]")
