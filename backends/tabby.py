@@ -124,9 +124,6 @@ class TabbyBackend(Backend):
         try:
             cmd = [run_path] + (run_arguments.split() if run_arguments else [])
             
-            env = os.environ.copy()
-            if environment:
-                env.update(environment)
             
             self.process = subprocess.Popen(
                 cmd,
@@ -134,7 +131,7 @@ class TabbyBackend(Backend):
                 # stderr=subprocess.PIPE,
                 # shell=True,
                 # text=True
-                env=env
+                env=environment
             )
             
             print(f"[TabbyBackend] Started backend process with PID {self.process.pid}")
