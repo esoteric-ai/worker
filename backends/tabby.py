@@ -6,7 +6,7 @@ import sys
 from typing import List, Dict, Any, Optional, TypedDict
 
 from backends.base import Backend, ModelConfig
-from backends.generation_params import GenerationParams, PreciseParams
+from backends.generation_params import GenerationParams, PRECISE_PARAMS
 
 from openai import AsyncOpenAI
 import httpx
@@ -178,7 +178,7 @@ class TabbyBackend(Backend):
             self.running = False
 
 
-    async def chat_completion(self, conversation: List[Dict[str, Any]], params: GenerationParams = PreciseParams) -> str:
+    async def chat_completion(self, conversation: List[Dict[str, Any]], params: GenerationParams = PRECISE_PARAMS) -> str:
         """
         Use the shared OpenAI client for chat completions with generation parameters.
         The API call is made using the aliased API model name.
@@ -192,8 +192,6 @@ class TabbyBackend(Backend):
             "model": self.active_model.get("api_name"),
             "messages": conversation,
         }
-
-        print("DEBUG1")
         
         extra_body = {
             "temperature": params.get("temperature", 0.1),
@@ -224,15 +222,13 @@ class TabbyBackend(Backend):
             )
             
             if not response.choices:
-                print("WARNING: No choices in response")
                 return ""
 
-            print(f"DEBUG - content length: {len(response.choices[0].message.content)}")
             return response.choices[0].message.content
         except Exception as e:
             print(f"ERROR in chat_completion: {type(e).__name__}: {str(e)}")
             # Re-raise to ensure benchmark correctly detects the failure
             raise
 
-    async def completion(self, prompt: str, params: GenerationParams = PreciseParams) -> str:
+    async def completion(self, prompt: str, params: GenerationParams = PRECISE_PARAMS) -> str:
         return ""

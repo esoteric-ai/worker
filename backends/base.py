@@ -13,7 +13,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich import print as rprint
 
-from backends.generation_params import GenerationParams, PreciseParams
+from backends.generation_params import PRECISE_PARAMS, GenerationParams
 
 # Initialize Rich console
 console = Console()
@@ -342,11 +342,11 @@ class Backend(ABC):
         pass
     
     @abstractmethod
-    async def completion(self, prompt: str, params: GenerationParams = PreciseParams) -> str:
+    async def completion(self, prompt: str, params: GenerationParams = PRECISE_PARAMS) -> str:
         pass
 
     @abstractmethod
-    async def chat_completion(self, conversation: List[Dict[str, Any]], params: GenerationParams = PreciseParams) -> str:
+    async def chat_completion(self, conversation: List[Dict[str, Any]], params: GenerationParams = PRECISE_PARAMS) -> str:
         pass
     
     @abstractmethod
