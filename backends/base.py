@@ -166,7 +166,7 @@ class Backend(ABC):
         console.print("\n[bold yellow]🔍 Finding optimal parallelism level...[/]")
         
         # Start with testing powers of 2
-        counts_to_test = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
+        counts_to_test = [1, 2, 4, 8, 16, 32, 64]
         results = {}
         
         # Test powers of 2 to find approximate range
