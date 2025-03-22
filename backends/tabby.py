@@ -57,6 +57,7 @@ class TabbyBackend(Backend):
         request_body = {
             "model_name": api_name,
             "max_seq_len": context_length,
+            "chunk_size" : 2048,
         }
 
         if "gpu_split" in load_options:
