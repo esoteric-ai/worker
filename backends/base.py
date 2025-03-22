@@ -83,8 +83,8 @@ class Backend(ABC):
         
         # Create a test prompt asking for a 500-word story
         conversation = [
-            {"role": "system", "content": "You are a creative assistant."},
-            {"role": "user", "content": "Write a 500-word story about an adventure in space."}
+            {"role": "system", "content": "You are a precise assistant."},
+            {"role": "user", "content": "Hello. Please write one short sentence about you."}
         ]
         
         console.print("[bold]📋 Test prompt:[/] Write a 500-word story about an adventure in space.")
