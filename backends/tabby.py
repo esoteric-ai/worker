@@ -219,7 +219,7 @@ class TabbyBackend(Backend):
             **request_body,
             extra_body=extra_body,
         )
-
+        print(response.choices[0].message.content)
         if not response.choices:
             return ""
         
