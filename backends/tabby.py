@@ -157,19 +157,18 @@ class TabbyBackend(Backend):
             else:
                 import signal
                 self.process.send_signal(signal.SIGTERM)
-                
+                    
             # Wait for a short time for graceful shutdown
             try:
+                # Run the blocking wait() in a thread to avoid blocking the event loop
+                loop = asyncio.get_event_loop()
                 await asyncio.wait_for(
-                    asyncio.create_subprocess_exec(
-                        lambda: self.process.wait()
-                    ), 
+                    loop.run_in_executor(None, self.process.wait),
                     timeout=2.5
                 )
             except asyncio.TimeoutError:
                 self.process.kill()
-            
-                
+                    
             print(f"[TabbyBackend] Process stopped")
             self.process = None
             self.running = False
