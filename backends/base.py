@@ -30,17 +30,11 @@ class ModelConfig(TypedDict):
     
     
 class Backend(ABC):
-    
-    @staticmethod
     async def benchmark_model(self, model: ModelConfig) -> ModelConfig:
         return await benchmark_model_implementation(self, model)
     
     @abstractmethod
     async def get_type(self) -> Literal["Managed", "Instant"]:
-        pass
-    
-    @abstractmethod
-    async def benchmark_model(self, model: ModelConfig) -> ModelConfig:
         pass
 
     @abstractmethod
