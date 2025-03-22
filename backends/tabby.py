@@ -136,6 +136,8 @@ class TabbyBackend(Backend):
             
             print(f"[TabbyBackend] Started backend process with PID {self.process.pid}")
             
+            await asyncio.sleep(10)
+            
             if self.process.poll() is not None:
                 raise RuntimeError(f"Failed to start process: {self.process.stderr.read()}")
                 
