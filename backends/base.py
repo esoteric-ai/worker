@@ -46,7 +46,7 @@ class Backend(ABC):
         Implementation of the benchmark_model method that can be used by all backends.
         """
         # Print benchmark header
-        model_name = model.get('name', 'Unknown Model')
+        model_name = model.get('alias', 'Unknown Model')
         console.print(Panel.fit(f"[bold cyan]Benchmarking Model:[/] [yellow]{model_name}[/]", 
                             border_style="blue", padding=(1, 2)))
         
