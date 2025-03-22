@@ -150,25 +150,25 @@ class TabbyBackend(Backend):
     async def stop(self):
         if not self.running:
             return
-        
+
         try:
             if sys.platform == "win32":
                 self.process.terminate()
             else:
                 import signal
                 self.process.send_signal(signal.SIGTERM)
-                    
+
             # Wait for a short time for graceful shutdown
-            try:
-                # Run the blocking wait() in a thread to avoid blocking the event loop
-                loop = asyncio.get_event_loop()
-                await asyncio.wait_for(
-                    loop.run_in_executor(None, self.process.wait),
-                    timeout=2.5
-                )
-            except asyncio.TimeoutError:
-                self.process.kill()
-                    
+            #try:
+            #    # Run the blocking wait() in a thread to avoid blocking the event loop
+            #    loop = asyncio.get_event_loop()
+            #    await asyncio.wait_for(
+            #        loop.run_in_executor(None, self.process.wait),
+            #        timeout=2.5
+            #    )
+            #except asyncio.TimeoutError:
+            self.process.kill()
+
             print(f"[TabbyBackend] Process stopped")
             self.process = None
             self.running = False
