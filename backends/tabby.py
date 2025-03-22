@@ -228,3 +228,6 @@ class TabbyBackend(Backend):
             return ""
         
         return response.choices[0].message.content
+
+    async def completion(self, prompt: str, params: GenerationParams = PreciseParams) -> str:
+        return ""
