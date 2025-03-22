@@ -184,7 +184,7 @@ class Backend(ABC):
             
             for count in counts_to_test:
                 # Skip if count is higher than a previously failed count
-                if max_successful_count > 0 and count > max_successful_count:
+                if max_successful_count > 0 and not results.get(max_successful_count, {}).get("success", True) and count > max_successful_count:
                     console.print(f"[yellow]Skipping {count} parallel requests (higher than previous failure)[/]")
                     progress.update(task, advance=1)
                     continue
