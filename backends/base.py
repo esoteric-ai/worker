@@ -31,7 +31,7 @@ class ModelConfig(TypedDict):
     
 class Backend(ABC):
     
-    @abstractmethod
+    @staticmethod
     async def benchmark_model(self, model: ModelConfig) -> ModelConfig:
         return await benchmark_model_implementation(self, model)
     

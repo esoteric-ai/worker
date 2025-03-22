@@ -43,9 +43,6 @@ class TabbyBackend(Backend):
     
     
     
-    async def benchmark_model(self, model: ModelConfig) -> ModelConfig:
-        pass
-    
     async def load_model(self, model: ModelConfig) -> None:
         if not self.running:
             await self.start()
@@ -106,7 +103,7 @@ class TabbyBackend(Backend):
                 )
                 response.raise_for_status()
 
-            print(f"[TabbyBackend] Successfully unloaded model: {self.model.api_name}")
+            print(f"[TabbyBackend] Successfully unloaded model: {self.active_model.get("api_name")}")
 
             self.active_model = None
 
