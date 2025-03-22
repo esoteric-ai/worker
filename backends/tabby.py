@@ -5,7 +5,7 @@ import subprocess
 import sys
 from typing import List, Dict, Any, Optional, TypedDict
 
-from backends.base import Backend, Device, ModelConfig
+from backends.base import Backend, ModelConfig
 from backends.generation_params import GenerationParams, PreciseParams
 
 from openai import AsyncOpenAI
