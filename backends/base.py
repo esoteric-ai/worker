@@ -1,9 +1,11 @@
 # backends/base.py
 from abc import ABC, abstractmethod
-from typing import List, Dict, Literal, Any, Optional, TypedDict
+from typing import List, Dict, Literal, Any, Optional, TypedDict, TYPE_CHECKING
 
 from backends.generation_params import GenerationParams, PreciseParams
-from backends.benchmark import benchmark_model_implementation
+
+if TYPE_CHECKING:
+    from backends.benchmark import benchmark_model_implementation
 
 class ModelLoadConfig(TypedDict):
     num_gpu_layers: int = 0
