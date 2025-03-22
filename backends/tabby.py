@@ -215,18 +215,23 @@ class TabbyBackend(Backend):
             "mirostat_eta": 0.1,
         }
         
-        extra_body = {k: v for k, v in extra_body.items() if v is not None}
-
-        response = await self.openai_client.chat.completions.create(
-            **request_body,
-            extra_body=extra_body,
-        )
-        print("DEBUG ")
-        print(response.choices[0].message.content)
-        if not response.choices:
-            return ""
-        
-        return response.choices[0].message.content
+        try:
+            response = await self.openai_client.chat.completions.create(
+                **request_body,
+                extra_body=extra_body,
+            )
+            print(f"DEBUG - received response with status: {getattr(response, 'model', 'unknown')}")
+            
+            if not response.choices:
+                print("WARNING: No choices in response")
+                return ""
+            
+            print(f"DEBUG - content length: {len(response.choices[0].message.content)}")
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"ERROR in chat_completion: {type(e).__name__}: {str(e)}")
+            # Re-raise to ensure benchmark correctly detects the failure
+            raise
 
     async def completion(self, prompt: str, params: GenerationParams = PreciseParams) -> str:
         return ""
