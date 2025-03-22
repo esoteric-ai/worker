@@ -183,7 +183,7 @@ class TabbyBackend(Backend):
         Use the shared OpenAI client for chat completions with generation parameters.
         The API call is made using the aliased API model name.
         """
-        print("DEBUG1")
+        
         
         if not self.active_model:
             raise ValueError("No active model loaded. Call load_model() first.")
@@ -193,6 +193,8 @@ class TabbyBackend(Backend):
             "messages": conversation,
         }
 
+        print("DEBUG1")
+        
         extra_body = {
             "temperature": params.get("temperature", 0.1),
             "max_tokens": params.get("max_tokens", 700),
@@ -220,12 +222,11 @@ class TabbyBackend(Backend):
                 **request_body,
                 extra_body=extra_body,
             )
-            print(f"DEBUG - received response with status: {getattr(response, 'model', 'unknown')}")
             
             if not response.choices:
                 print("WARNING: No choices in response")
                 return ""
-            
+
             print(f"DEBUG - content length: {len(response.choices[0].message.content)}")
             return response.choices[0].message.content
         except Exception as e:
