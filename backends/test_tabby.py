@@ -31,7 +31,7 @@ class TestTabbyBackend():
             )
         )
         
-        self.backend.load_model(model_config)
+        await self.backend.load_model(model_config)
         
         stream = await self.backend.completion("A quick brown fox", True, 300)
         
