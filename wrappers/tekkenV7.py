@@ -73,6 +73,8 @@ class TekkenV7:
         result = ""
         
         async for event in stream:
+            print("CHUNK RECEIVED")
+            print(event.choices[0].text)
             result += event.choices[0].text
         
         print(result)
