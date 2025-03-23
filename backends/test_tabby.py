@@ -42,7 +42,7 @@ class TestTabbyBackend():
         wrapper = TekkenV7(self.backend)
         result = await wrapper.chat_completion(chat, True)
         
-        for i in result:
+        async for i in result:
             print(result)
         
         
