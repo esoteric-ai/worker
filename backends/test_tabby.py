@@ -43,7 +43,7 @@ class TestTabbyBackend():
         result = await wrapper.chat_completion(chat, True)
         
         async for i in result:
-            print(result)
+            print(i)
         
         
         await self.backend.unload_model()
