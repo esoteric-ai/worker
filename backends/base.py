@@ -1,6 +1,6 @@
 # backends/base.py
 from abc import ABC, abstractmethod
-from typing import List, Dict, Literal, Any, Optional, TypedDict
+from typing import AsyncIterator, List, Dict, Literal, Any, Optional, TypedDict, Union
 import asyncio
 import time
 import psutil
@@ -342,7 +342,7 @@ class Backend(ABC):
         pass
     
     @abstractmethod
-    async def completion(self, prompt: str, params: GenerationParams = PRECISE_PARAMS) -> str:
+    async def completion(self, prompt: str,  stream: bool = False, params: GenerationParams = PRECISE_PARAMS) -> Union[str, AsyncIterator]:
         pass
 
     @abstractmethod

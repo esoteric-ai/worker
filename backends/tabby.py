@@ -3,7 +3,7 @@ import asyncio
 import os
 import subprocess
 import sys
-from typing import List, Dict, Any, Optional, TypedDict
+from typing import AsyncIterator, List, Dict, Any, Optional, TypedDict, Union
 
 from backends.base import Backend, ModelConfig
 from backends.generation_params import GenerationParams, PRECISE_PARAMS
@@ -253,5 +253,56 @@ class TabbyBackend(Backend):
             # Re-raise to ensure benchmark correctly detects the failure
             raise
 
-    async def completion(self, prompt: str, params: GenerationParams = PRECISE_PARAMS) -> str:
-        return ""
+    async def completion(self, prompt: str, stream: bool = False, max_tokens: int = 100, params: GenerationParams = PRECISE_PARAMS) -> Union[str, AsyncIterator]:
+
+        if not self.active_model:
+            raise ValueError("No active model loaded. Call load_model() first.")
+
+        request_body = {
+            "model": self.active_model.get("api_name"),
+            "prompt": prompt,
+            "stream": stream,
+            "max_tokens" : max_tokens
+        }
+
+        extra_body = {
+            "temperature": params.get("temperature", 0.1),
+            "max_tokens": params.get("max_tokens", 700),
+            "top_p": params.get("top_p", 1.0),
+            "top_k": params.get("top_k", 1),
+            "min_p": params.get("min_p", 0.0),
+            "repetition_penalty": params.get("repetition_penalty", 1.0),
+            "frequency_penalty": params.get("frequency_penalty", 0.0),
+            "presence_penalty": params.get("presence_penalty", 0.0),
+
+            # Not implemented yet parameters
+            "penalty_range": -1,
+            "top_a": 0.0,
+            "temp_last": False,
+            "typical": 1.0,
+            "tfs": 1.0,
+            "logit_bias": None,
+            "mirostat_mode": 0,
+            "mirostat_tau": 5,
+            "mirostat_eta": 0.1,
+        }
+
+        try:
+            response = await self.openai_client.completions.create(
+                **request_body,
+                extra_body=extra_body,
+            )
+
+            if stream:
+                # Return the stream iterator directly
+                return response
+            else:
+                # Process the response and return the string
+                if not response.choices:
+                    return ""
+                return response.choices[0].text
+
+        except Exception as e:
+            print(f"ERROR in completion: {type(e).__name__}: {str(e)}")
+            # Re-raise to ensure benchmark correctly detects the failure
+            raise

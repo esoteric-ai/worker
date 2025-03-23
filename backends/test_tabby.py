@@ -18,7 +18,7 @@ class TestTabbyBackend():
         if self.backend.running:
             asyncio.run(self.backend.stop())
     
-    def test_benchmark_model(self):
+    async def test_start(self):
         model_config = ModelConfig(
             alias="test-model",
             backend="tabby",
@@ -31,11 +31,21 @@ class TestTabbyBackend():
             )
         )
         
-        # Run the benchmark
-        result = asyncio.run(self.backend.benchmark_model(model_config))
-
-        # Print benchmark results for inspection
-        print(f"Benchmark results: {result.get('performance_metrics', {}).get('benchmark_results', {})}")
+        self.backend.load_model(model_config)
+        
+        stream = self.backend.completion("A quick brown fox", True, 300)
+        
+        for event in stream:
+            print(event)
+        
+        
+        self.backend.unload_model()
+    
+    def test_benchmark_model(self):
+        
+        
+        asyncio.run(self.test_start())
+        
 
 if __name__ == "__main__":
     test = TestTabbyBackend()
