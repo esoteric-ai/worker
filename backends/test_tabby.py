@@ -35,11 +35,14 @@ class TestTabbyBackend():
         
         stream = await self.backend.completion("A quick brown fox", True, 300)
         
+        result = ""
+        
         async for event in stream:
-            print(event)
+            result += event.choices[0].text
         
+        print(result)
         
-        self.backend.unload_model()
+        await self.backend.unload_model()
     
     def test_benchmark_model(self):
         
