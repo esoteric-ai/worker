@@ -36,12 +36,14 @@ class TestTabbyBackend():
         
         chat = [
             {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Hello, how are you? Please write a short story about skibidi toilets (100 words)."},
+            {"role": "user", "content": "Hello, how are you? Please write answer and then call weather tool in Moscow."},
         ]
         
         wrapper = TekkenV7(self.backend)
-        result = await wrapper.chat_completion(chat)
-        print(result)
+        result = await wrapper.chat_completion(chat, True)
+        
+        for i in result:
+            print(result)
         
         
         await self.backend.unload_model()
