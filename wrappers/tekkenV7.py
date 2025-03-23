@@ -20,15 +20,6 @@ from mistral_common.protocol.instruct.tool_calls import (
     Tool,
 )
 from mistral_common.tokens.tokenizers.mistral import MistralTokenizer
-from mistral_common.protocol.instruct.response import (
-    ChatCompletionChoice,
-    ChatCompletionChunk,
-    ChatCompletionStreamChoice,
-    ChatCompletionResponse,
-    ChoiceDelta,
-    ToolCall,
-    FunctionCall
-)
 
 
 class TekkenV7:
@@ -40,8 +31,8 @@ class TekkenV7:
         """Replace '▁' with two spaces in the text."""
         return text.replace('▁', '  ')
     
-    def _parse_tool_calls(self, tool_calls_text: str) -> List[ToolCall]:
-        """Parse tool calls from the text format to ToolCall objects."""
+    def _parse_tool_calls(self, tool_calls_text: str) -> List[Dict[str, Any]]:
+        """Parse tool calls from the text format to dictionary objects."""
         # Clean up the text and replace the special characters
         clean_text = self._replace_special_chars(tool_calls_text)
         
@@ -58,32 +49,30 @@ class TekkenV7:
             if isinstance(tool_calls_json, dict):
                 tool_calls_json = [tool_calls_json]
                 
-            # Create ToolCall objects
+            # Create ToolCall dictionaries
             result = []
             for idx, call in enumerate(tool_calls_json):
                 call_id = f"call_{uuid.uuid4().hex[:8]}"
                 
-                # Convert arguments to a JSON string if it's a dict
+                # Ensure arguments is a JSON string
                 arguments = call.get("arguments", {})
                 if isinstance(arguments, dict):
-                    arguments = json.dumps(arguments)
+                    arguments = json.dumps(arguments, indent=2)
                 
-                result.append(
-                    ToolCall(
-                        id=call_id,
-                        type="function",
-                        function=FunctionCall(
-                            name=call.get("name", ""),
-                            arguments=arguments
-                        )
-                    )
-                )
+                result.append({
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": call.get("name", ""),
+                        "arguments": arguments
+                    }
+                })
             return result
         except json.JSONDecodeError:
             # If JSON parsing fails, return empty list
             return []
     
-    def _split_content_and_tool_calls(self, text: str) -> tuple[Optional[str], List[ToolCall]]:
+    def _split_content_and_tool_calls(self, text: str) -> tuple[Optional[str], List[Dict[str, Any]]]:
         """Split the completion text into content and tool calls."""
         # Replace special characters
         text = self._replace_special_chars(text)
@@ -101,7 +90,7 @@ class TekkenV7:
             # No tool calls, just content
             return text.strip() if text.strip() else None, []
     
-    async def chat_completion(self, conversation: List[Dict[str, Any]], stream: bool = False, params: GenerationParams = PRECISE_PARAMS) -> Union[ChatCompletionResponse, AsyncIterator[ChatCompletionChunk]]:
+    async def chat_completion(self, conversation: List[Dict[str, Any]], params: GenerationParams = PRECISE_PARAMS, stream: bool = False) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
         tokenizer = MistralTokenizer.v7()
         
         messages = []
@@ -152,7 +141,7 @@ class TekkenV7:
         else:
             return await self._non_stream_chat_completion(text)
     
-    async def _non_stream_chat_completion(self, prompt: str) -> ChatCompletionResponse:
+    async def _non_stream_chat_completion(self, prompt: str) -> Dict[str, Any]:
         """Handle non-streaming completion requests."""
         response = await self.backend.completion(prompt, stream=False, max_tokens=500)
         
@@ -167,25 +156,25 @@ class TekkenV7:
         if tool_calls:
             finish_reason = "tool_calls"
         
-        # Create the response object
-        return ChatCompletionResponse(
-            id=f"chatcmpl_{uuid.uuid4().hex[:8]}",
-            object="chat.completion",
-            created=int(time.time()),
-            model="gpt-4o-mini",  # Placeholder, use actual model name if available
-            choices=[
-                ChatCompletionChoice(
-                    index=0,
-                    message=AssistantMessage(
-                        role="assistant",
-                        content=content,
-                        tool_calls=tool_calls if tool_calls else None
-                    ),
-                    logprobs=None,
-                    finish_reason=finish_reason
-                )
+        # Create the response JSON
+        return {
+            "id": f"chatcmpl_{uuid.uuid4().hex[:8]}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": "gpt-4o-mini",  # Placeholder, use actual model name if available
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": content,
+                        "tool_calls": tool_calls if tool_calls else None
+                    },
+                    "logprobs": None,
+                    "finish_reason": finish_reason
+                }
             ],
-            usage={
+            "usage": {
                 "prompt_tokens": 0,  # Placeholder, use actual token count if available
                 "completion_tokens": 0,
                 "total_tokens": 0,
@@ -195,17 +184,19 @@ class TekkenV7:
                     "rejected_prediction_tokens": 0
                 }
             }
-        )
+        }
     
-    async def _stream_chat_completion(self, prompt: str) -> AsyncIterator[ChatCompletionChunk]:
+    async def _stream_chat_completion(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
         """Handle streaming completion requests."""
         stream = await self.backend.completion(prompt, stream=True, max_tokens=500)
         
         accumulated_text = ""
         content_complete = False
-        tool_calls_complete = False
-        tool_calls_text = ""
         tool_calls_sent = False
+        tool_calls_text = ""
+        
+        # Generate a consistent ID for all chunks in this stream
+        chat_id = f"chatcmpl_{uuid.uuid4().hex[:8]}"
         
         async for event in stream:
             chunk = self._replace_special_chars(event.choices[0].text)
@@ -219,24 +210,24 @@ class TekkenV7:
                 
                 # Only yield content if there's actually content
                 if content_text:
-                    yield ChatCompletionChunk(
-                        id=f"chatcmpl_{uuid.uuid4().hex[:8]}",
-                        object="chat.completion.chunk",
-                        created=int(time.time()),
-                        model="gpt-4o-mini",  # Placeholder
-                        choices=[
-                            ChatCompletionStreamChoice(
-                                delta=ChoiceDelta(
-                                    content=content_text,
-                                    function_call=None,
-                                    role="assistant",
-                                    tool_calls=None
-                                ),
-                                finish_reason=None,
-                                index=0
-                            )
+                    yield {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": "gpt-4o-mini",  # Placeholder
+                        "choices": [
+                            {
+                                "delta": {
+                                    "content": content_text,
+                                    "function_call": None,
+                                    "role": "assistant",
+                                    "tool_calls": None
+                                },
+                                "finish_reason": None,
+                                "index": 0
+                            }
                         ]
-                    )
+                    }
                 
                 # Mark content as complete
                 content_complete = True
@@ -245,24 +236,24 @@ class TekkenV7:
                 tool_calls_text = "[TOOL_CALLS]" + content_parts[1]
             elif not content_complete:
                 # Still collecting content
-                yield ChatCompletionChunk(
-                    id=f"chatcmpl_{uuid.uuid4().hex[:8]}",
-                    object="chat.completion.chunk",
-                    created=int(time.time()),
-                    model="gpt-4o-mini",  # Placeholder
-                    choices=[
-                        ChatCompletionStreamChoice(
-                            delta=ChoiceDelta(
-                                content=chunk,
-                                function_call=None,
-                                role="assistant",
-                                tool_calls=None
-                            ),
-                            finish_reason=None,
-                            index=0
-                        )
+                yield {
+                    "id": chat_id,
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": "gpt-4o-mini",  # Placeholder
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": chunk,
+                                "function_call": None,
+                                "role": "assistant",
+                                "tool_calls": None
+                            },
+                            "finish_reason": None,
+                            "index": 0
+                        }
                     ]
-                )
+                }
             else:
                 # Continue collecting tool calls text
                 tool_calls_text += chunk
@@ -272,43 +263,43 @@ class TekkenV7:
                 
                 # If we have valid tool calls and haven't sent them yet
                 if tool_calls and not tool_calls_sent:
-                    yield ChatCompletionChunk(
-                        id=f"chatcmpl_{uuid.uuid4().hex[:8]}",
-                        object="chat.completion.chunk",
-                        created=int(time.time()),
-                        model="gpt-4o-mini",  # Placeholder
-                        choices=[
-                            ChatCompletionStreamChoice(
-                                delta=ChoiceDelta(
-                                    content="",
-                                    function_call=None,
-                                    role="assistant",
-                                    tool_calls=tool_calls
-                                ),
-                                finish_reason=None,
-                                index=0
-                            )
+                    yield {
+                        "id": chat_id,
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": "gpt-4o-mini",  # Placeholder
+                        "choices": [
+                            {
+                                "delta": {
+                                    "content": "",
+                                    "function_call": None,
+                                    "role": "assistant",
+                                    "tool_calls": tool_calls
+                                },
+                                "finish_reason": None,
+                                "index": 0
+                            }
                         ]
-                    )
+                    }
                     tool_calls_sent = True
         
         # Final chunk to signal completion
         finish_reason = "tool_calls" if tool_calls_sent else "stop"
-        yield ChatCompletionChunk(
-            id=f"chatcmpl_{uuid.uuid4().hex[:8]}",
-            object="chat.completion.chunk",
-            created=int(time.time()),
-            model="gpt-4o-mini",  # Placeholder
-            choices=[
-                ChatCompletionStreamChoice(
-                    delta=ChoiceDelta(
-                        content=None,
-                        function_call=None,
-                        role=None,
-                        tool_calls=None
-                    ),
-                    finish_reason=finish_reason,
-                    index=0
-                )
+        yield {
+            "id": chat_id,
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": "gpt-4o-mini",  # Placeholder
+            "choices": [
+                {
+                    "delta": {
+                        "content": None,
+                        "function_call": None,
+                        "role": None,
+                        "tool_calls": None
+                    },
+                    "finish_reason": finish_reason,
+                    "index": 0
+                }
             ]
-        )
+        }
