@@ -137,7 +137,8 @@ class TekkenV7:
         print("Formatted prompt: " + str(text))
         
         if stream:
-            return self._stream_chat_completion(text)
+            # Return an async generator
+            return self._create_stream_iterator(text)
         else:
             return await self._non_stream_chat_completion(text)
     
@@ -186,30 +187,57 @@ class TekkenV7:
             }
         }
     
-    async def _stream_chat_completion(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
-        """Handle streaming completion requests."""
-        stream = await self.backend.completion(prompt, stream=True, max_tokens=500)
-        
-        accumulated_text = ""
-        content_complete = False
-        tool_calls_sent = False
-        tool_calls_text = ""
-        
-        # Generate a consistent ID for all chunks in this stream
-        chat_id = f"chatcmpl_{uuid.uuid4().hex[:8]}"
-        
-        async for event in stream:
-            chunk = self._replace_special_chars(event.choices[0].text)
-            accumulated_text += chunk
+    async def _create_stream_iterator(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """Create and return an async iterator for streaming responses."""
+        async def stream_generator():
+            stream = await self.backend.completion(prompt, stream=True, max_tokens=500)
             
-            # Check if we have reached the tool calls marker
-            if not content_complete and "[TOOL_CALLS]" in accumulated_text:
-                # Send all text before the tool calls marker as content
-                content_parts = accumulated_text.split("[TOOL_CALLS]", 1)
-                content_text = content_parts[0].strip()
+            accumulated_text = ""
+            content_complete = False
+            tool_calls_sent = False
+            tool_calls_text = ""
+            
+            # Generate a consistent ID for all chunks in this stream
+            chat_id = f"chatcmpl_{uuid.uuid4().hex[:8]}"
+            
+            async for event in stream:
+                chunk = self._replace_special_chars(event.choices[0].text)
+                accumulated_text += chunk
                 
-                # Only yield content if there's actually content
-                if content_text:
+                # Check if we have reached the tool calls marker
+                if not content_complete and "[TOOL_CALLS]" in accumulated_text:
+                    # Send all text before the tool calls marker as content
+                    content_parts = accumulated_text.split("[TOOL_CALLS]", 1)
+                    content_text = content_parts[0].strip()
+                    
+                    # Only yield content if there's actually content
+                    if content_text:
+                        yield {
+                            "id": chat_id,
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": "gpt-4o-mini",  # Placeholder
+                            "choices": [
+                                {
+                                    "delta": {
+                                        "content": content_text,
+                                        "function_call": None,
+                                        "role": "assistant",
+                                        "tool_calls": None
+                                    },
+                                    "finish_reason": None,
+                                    "index": 0
+                                }
+                            ]
+                        }
+                    
+                    # Mark content as complete
+                    content_complete = True
+                    
+                    # Start collecting tool calls
+                    tool_calls_text = "[TOOL_CALLS]" + content_parts[1]
+                elif not content_complete:
+                    # Still collecting content
                     yield {
                         "id": chat_id,
                         "object": "chat.completion.chunk",
@@ -218,7 +246,7 @@ class TekkenV7:
                         "choices": [
                             {
                                 "delta": {
-                                    "content": content_text,
+                                    "content": chunk,
                                     "function_call": None,
                                     "role": "assistant",
                                     "tool_calls": None
@@ -228,78 +256,55 @@ class TekkenV7:
                             }
                         ]
                     }
-                
-                # Mark content as complete
-                content_complete = True
-                
-                # Start collecting tool calls
-                tool_calls_text = "[TOOL_CALLS]" + content_parts[1]
-            elif not content_complete:
-                # Still collecting content
-                yield {
-                    "id": chat_id,
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": "gpt-4o-mini",  # Placeholder
-                    "choices": [
-                        {
-                            "delta": {
-                                "content": chunk,
-                                "function_call": None,
-                                "role": "assistant",
-                                "tool_calls": None
-                            },
-                            "finish_reason": None,
-                            "index": 0
+                else:
+                    # Continue collecting tool calls text
+                    tool_calls_text += chunk
+                    
+                    # Try to parse tool calls to see if they're complete
+                    tool_calls = self._parse_tool_calls(tool_calls_text)
+                    
+                    # If we have valid tool calls and haven't sent them yet
+                    if tool_calls and not tool_calls_sent:
+                        yield {
+                            "id": chat_id,
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": "gpt-4o-mini",  # Placeholder
+                            "choices": [
+                                {
+                                    "delta": {
+                                        "content": "",
+                                        "function_call": None,
+                                        "role": "assistant",
+                                        "tool_calls": tool_calls
+                                    },
+                                    "finish_reason": None,
+                                    "index": 0
+                                }
+                            ]
                         }
-                    ]
-                }
-            else:
-                # Continue collecting tool calls text
-                tool_calls_text += chunk
-                
-                # Try to parse tool calls to see if they're complete
-                tool_calls = self._parse_tool_calls(tool_calls_text)
-                
-                # If we have valid tool calls and haven't sent them yet
-                if tool_calls and not tool_calls_sent:
-                    yield {
-                        "id": chat_id,
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": "gpt-4o-mini",  # Placeholder
-                        "choices": [
-                            {
-                                "delta": {
-                                    "content": "",
-                                    "function_call": None,
-                                    "role": "assistant",
-                                    "tool_calls": tool_calls
-                                },
-                                "finish_reason": None,
-                                "index": 0
-                            }
-                        ]
+                        tool_calls_sent = True
+            
+            # Final chunk to signal completion
+            finish_reason = "tool_calls" if tool_calls_sent else "stop"
+            yield {
+                "id": chat_id,
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": "gpt-4o-mini",  # Placeholder
+                "choices": [
+                    {
+                        "delta": {
+                            "content": None,
+                            "function_call": None,
+                            "role": None,
+                            "tool_calls": None
+                        },
+                        "finish_reason": finish_reason,
+                        "index": 0
                     }
-                    tool_calls_sent = True
+                ]
+            }
         
-        # Final chunk to signal completion
-        finish_reason = "tool_calls" if tool_calls_sent else "stop"
-        yield {
-            "id": chat_id,
-            "object": "chat.completion.chunk",
-            "created": int(time.time()),
-            "model": "gpt-4o-mini",  # Placeholder
-            "choices": [
-                {
-                    "delta": {
-                        "content": None,
-                        "function_call": None,
-                        "role": None,
-                        "tool_calls": None
-                    },
-                    "finish_reason": finish_reason,
-                    "index": 0
-                }
-            ]
-        }
+        # Return the async generator
+        return stream_generator()
