@@ -35,7 +35,7 @@ class TestTabbyBackend():
         
         stream = await self.backend.completion("A quick brown fox", True, 300)
         
-        for event in stream:
+        async for event in stream:
             print(event)
         
         
