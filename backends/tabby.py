@@ -302,9 +302,7 @@ class TabbyBackend(Backend):
                 return response
             else:
                 # Process the response and return the string
-                if not response.choices:
-                    return ""
-                return response.choices[0].text
+                return response
 
         except Exception as e:
             print(f"ERROR in completion: {type(e).__name__}: {str(e)}")
