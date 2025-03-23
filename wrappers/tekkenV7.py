@@ -1,8 +1,8 @@
-from typing import Any, Dict, List, AsyncIterator, Optional
+from typing import Any, Dict, List, AsyncIterator, Optional, Union
 import json
 import re
-import uuid
 import time
+import uuid
 import asyncio
 from backends.base import Backend
 from backends.generation_params import PRECISE_PARAMS, GenerationParams
@@ -20,6 +20,15 @@ from mistral_common.protocol.instruct.tool_calls import (
     Tool,
 )
 from mistral_common.tokens.tokenizers.mistral import MistralTokenizer
+from mistral_common.protocol.instruct.response import (
+    ChatCompletionChoice,
+    ChatCompletionChunk,
+    ChatCompletionStreamChoice,
+    ChatCompletionResponse,
+    ChoiceDelta,
+    ToolCall,
+    FunctionCall
+)
 
 
 class TekkenV7:
@@ -27,21 +36,72 @@ class TekkenV7:
     def __init__(self, backend: Backend):
         self.backend = backend
     
-    async def chat_completion(self, 
-                             conversation: List[Dict[str, Any]], 
-                             stream: bool = False,
-                             params: GenerationParams = PRECISE_PARAMS) -> Any:
-        """
-        Process chat completion with support for streaming and tool calls.
+    def _replace_special_chars(self, text: str) -> str:
+        """Replace '▁' with two spaces in the text."""
+        return text.replace('▁', '  ')
+    
+    def _parse_tool_calls(self, tool_calls_text: str) -> List[ToolCall]:
+        """Parse tool calls from the text format to ToolCall objects."""
+        # Clean up the text and replace the special characters
+        clean_text = self._replace_special_chars(tool_calls_text)
         
-        Args:
-            conversation: List of conversation messages
-            stream: Whether to stream the response
-            params: Generation parameters
+        # Extract the JSON array from the [TOOL_CALLS] marker
+        match = re.search(r'\[TOOL_CALLS\](.*?)(?:\n\n|$)', clean_text, re.DOTALL)
+        if not match:
+            return []
+            
+        try:
+            # Parse the JSON array
+            tool_calls_json = json.loads(match.group(1))
+            
+            # If it's a single object, wrap it in a list
+            if isinstance(tool_calls_json, dict):
+                tool_calls_json = [tool_calls_json]
+                
+            # Create ToolCall objects
+            result = []
+            for idx, call in enumerate(tool_calls_json):
+                call_id = f"call_{uuid.uuid4().hex[:8]}"
+                
+                # Convert arguments to a JSON string if it's a dict
+                arguments = call.get("arguments", {})
+                if isinstance(arguments, dict):
+                    arguments = json.dumps(arguments)
+                
+                result.append(
+                    ToolCall(
+                        id=call_id,
+                        type="function",
+                        function=FunctionCall(
+                            name=call.get("name", ""),
+                            arguments=arguments
+                        )
+                    )
+                )
+            return result
+        except json.JSONDecodeError:
+            # If JSON parsing fails, return empty list
+            return []
+    
+    def _split_content_and_tool_calls(self, text: str) -> tuple[Optional[str], List[ToolCall]]:
+        """Split the completion text into content and tool calls."""
+        # Replace special characters
+        text = self._replace_special_chars(text)
         
-        Returns:
-            Chat completion response in OpenAI format or AsyncIterator of chunks if streaming
-        """
+        # Check if there are tool calls
+        if "[TOOL_CALLS]" in text:
+            # Split the text at the tool calls marker
+            content_parts = text.split("[TOOL_CALLS]", 1)
+            content = content_parts[0].strip() if content_parts[0].strip() else None
+            
+            # Parse tool calls
+            tool_calls = self._parse_tool_calls(text)
+            return content, tool_calls
+        else:
+            # No tool calls, just content
+            return text.strip() if text.strip() else None, []
+    
+    async def chat_completion(self, conversation: List[Dict[str, Any]], stream: bool = False, params: GenerationParams = PRECISE_PARAMS) -> Union[ChatCompletionResponse, AsyncIterator[ChatCompletionChunk]]:
         tokenizer = MistralTokenizer.v7()
         
         messages = []
@@ -85,356 +145,170 @@ class TekkenV7:
             )
         )
         text = tokenized.text
-
-        # Count the number of tokens
         print("Formatted prompt: " + str(text))
         
         if stream:
-            return self._stream_chat_completion(text, params)
+            return self._stream_chat_completion(text)
         else:
-            return await self._non_stream_chat_completion(text, params)
+            return await self._non_stream_chat_completion(text)
     
-    async def _non_stream_chat_completion(self, 
-                                         text: str, 
-                                         params: GenerationParams) -> Dict[str, Any]:
-        """
-        Handle non-streaming chat completion.
+    async def _non_stream_chat_completion(self, prompt: str) -> ChatCompletionResponse:
+        """Handle non-streaming completion requests."""
+        response = await self.backend.completion(prompt, stream=False, max_tokens=500)
         
-        Args:
-            text: The formatted prompt text
-            params: Generation parameters
+        # Get the completion text from the response
+        completion_text = self._replace_special_chars(response.choices[0].text)
         
-        Returns:
-            Chat completion response in OpenAI format
-        """
-        max_tokens = 500
-        response = await self.backend.completion(text, False, max_tokens)
+        # Parse content and tool calls
+        content, tool_calls = self._split_content_and_tool_calls(completion_text)
         
-        # Parse the completion text
-        completion_text = response.choices[0].text
+        # Determine finish reason
+        finish_reason = "stop"
+        if tool_calls:
+            finish_reason = "tool_calls"
         
-        # Check if there's a tool call in the response
-        tool_call_match = re.search(r'(\[TOOL_CALLS\]▁)(.*?)(\[/TOOL_CALLS\])?', completion_text, re.DOTALL)
-        
-        chat_response = {
-            "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": "tekken-v7",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                    },
-                    "logprobs": None,
-                }
+        # Create the response object
+        return ChatCompletionResponse(
+            id=f"chatcmpl_{uuid.uuid4().hex[:8]}",
+            object="chat.completion",
+            created=int(time.time()),
+            model="gpt-4o-mini",  # Placeholder, use actual model name if available
+            choices=[
+                ChatCompletionChoice(
+                    index=0,
+                    message=AssistantMessage(
+                        role="assistant",
+                        content=content,
+                        tool_calls=tool_calls if tool_calls else None
+                    ),
+                    logprobs=None,
+                    finish_reason=finish_reason
+                )
             ],
-            "usage": {
-                "prompt_tokens": response.usage.prompt_tokens if hasattr(response, 'usage') and hasattr(response.usage, 'prompt_tokens') else 0,
-                "completion_tokens": response.usage.completion_tokens if hasattr(response, 'usage') and hasattr(response.usage, 'completion_tokens') else 0,
-                "total_tokens": response.usage.total_tokens if hasattr(response, 'usage') and hasattr(response.usage, 'total_tokens') else 0,
+            usage={
+                "prompt_tokens": 0,  # Placeholder, use actual token count if available
+                "completion_tokens": 0,
+                "total_tokens": 0,
                 "completion_tokens_details": {
                     "reasoning_tokens": 0,
                     "accepted_prediction_tokens": 0,
                     "rejected_prediction_tokens": 0
                 }
             }
-        }
-        
-        if tool_call_match:
-            # Extract the content before the tool call
-            content_before_tool = completion_text[:tool_call_match.start()].strip()
-            chat_response["choices"][0]["message"]["content"] = content_before_tool if content_before_tool else None
-            
-            # Extract and parse the tool call
-            tool_call_text = tool_call_match.group(2).strip()
-            try:
-                tool_calls = json.loads(tool_call_text)
-                if not isinstance(tool_calls, list):
-                    tool_calls = [tool_calls]
-                
-                formatted_tool_calls = []
-                for i, call in enumerate(tool_calls):
-                    formatted_tool_calls.append({
-                        "id": f"call_{uuid.uuid4().hex[:6]}",
-                        "type": "function",
-                        "function": {
-                            "name": call.get("name", ""),
-                            "arguments": json.dumps(call.get("arguments", {}), indent=2)
-                        }
-                    })
-                
-                chat_response["choices"][0]["message"]["tool_calls"] = formatted_tool_calls
-                chat_response["choices"][0]["finish_reason"] = "tool_calls"
-                
-                # If there's content after the tool call
-                if tool_call_match.group(3) and tool_call_match.end() < len(completion_text):
-                    content_after_tool = completion_text[tool_call_match.end():].strip()
-                    if content_after_tool:
-                        if chat_response["choices"][0]["message"]["content"] is None:
-                            chat_response["choices"][0]["message"]["content"] = content_after_tool
-                        else:
-                            chat_response["choices"][0]["message"]["content"] += "\n" + content_after_tool
-            except json.JSONDecodeError:
-                # If we can't parse the tool call, treat it as regular content
-                chat_response["choices"][0]["message"]["content"] = completion_text
-                chat_response["choices"][0]["finish_reason"] = "stop"
-        else:
-            # No tool call, just regular content
-            chat_response["choices"][0]["message"]["content"] = completion_text
-            chat_response["choices"][0]["finish_reason"] = "stop"
-        
-        return chat_response
+        )
     
-    async def _stream_chat_completion(self, 
-                                    text: str, 
-                                    params: GenerationParams) -> AsyncIterator[Dict[str, Any]]:
-        """
-        Stream chat completion with support for tool calls.
+    async def _stream_chat_completion(self, prompt: str) -> AsyncIterator[ChatCompletionChunk]:
+        """Handle streaming completion requests."""
+        stream = await self.backend.completion(prompt, stream=True, max_tokens=500)
         
-        Args:
-            text: The formatted prompt text
-            params: Generation parameters
-        
-        Returns:
-            AsyncIterator of chat completion chunks
-        """
-        max_tokens = 500
-        stream = await self.backend.completion(text, True, max_tokens)
-        
-        response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-        
-        buffer = ""
-        tool_call_buffer = ""
-        in_tool_call = False
-        tool_call_sent = False
+        accumulated_text = ""
+        content_complete = False
+        tool_calls_complete = False
+        tool_calls_text = ""
+        tool_calls_sent = False
         
         async for event in stream:
-            chunk = event.choices[0].text
+            chunk = self._replace_special_chars(event.choices[0].text)
+            accumulated_text += chunk
             
-            if not in_tool_call:
-                # Check if this chunk contains the start of a tool call
-                tool_call_start = chunk.find("[TOOL_CALLS]▁")
+            # Check if we have reached the tool calls marker
+            if not content_complete and "[TOOL_CALLS]" in accumulated_text:
+                # Send all text before the tool calls marker as content
+                content_parts = accumulated_text.split("[TOOL_CALLS]", 1)
+                content_text = content_parts[0].strip()
                 
-                if tool_call_start >= 0:
-                    # Send the content before tool_call as a regular content chunk
-                    pre_tool_content = buffer + chunk[:tool_call_start]
-                    if pre_tool_content:
-                        yield {
-                            "id": response_id,
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": "tekken-v7",
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {
-                                        "role": "assistant",
-                                        "content": pre_tool_content,
-                                        "function_call": None,
-                                        "tool_calls": None
-                                    },
-                                    "finish_reason": None
-                                }
-                            ]
-                        }
-                    
-                    # Switch to tool call mode
-                    in_tool_call = True
-                    tool_call_buffer = chunk[tool_call_start + len("[TOOL_CALLS]▁"):]
-                    buffer = ""
-                else:
-                    # Regular content - add to buffer and send
-                    buffer += chunk
-                    if buffer:
-                        yield {
-                            "id": response_id,
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": "tekken-v7",
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {
-                                        "role": "assistant",
-                                        "content": buffer,
-                                        "function_call": None,
-                                        "tool_calls": None
-                                    },
-                                    "finish_reason": None
-                                }
-                            ]
-                        }
-                        buffer = ""
-            else:
-                # In tool call mode
-                tool_call_end = chunk.find("[/TOOL_CALLS]")
-                
-                if tool_call_end >= 0:
-                    # Tool call is complete
-                    tool_call_buffer += chunk[:tool_call_end]
-                    
-                    try:
-                        # Parse and send the tool call
-                        tool_calls_data = json.loads(tool_call_buffer)
-                        if not isinstance(tool_calls_data, list):
-                            tool_calls_data = [tool_calls_data]
-                        
-                        formatted_tool_calls = []
-                        for i, call in enumerate(tool_calls_data):
-                            formatted_tool_calls.append({
-                                "id": f"call_{uuid.uuid4().hex[:6]}",
-                                "type": "function",
-                                "function": {
-                                    "name": call.get("name", ""),
-                                    "arguments": json.dumps(call.get("arguments", {}), indent=2)
-                                }
-                            })
-                        
-                        yield {
-                            "id": response_id,
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": "tekken-v7",
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {
-                                        "role": "assistant",
-                                        "content": "",
-                                        "function_call": None,
-                                        "tool_calls": formatted_tool_calls
-                                    },
-                                    "finish_reason": None
-                                }
-                            ]
-                        }
-                        tool_call_sent = True
-                        
-                        # Switch back to regular content mode for any remaining content
-                        in_tool_call = False
-                        buffer = chunk[tool_call_end + len("[/TOOL_CALLS]"):]
-                        
-                        # If there's content after the tool call, send it
-                        if buffer:
-                            yield {
-                                "id": response_id,
-                                "object": "chat.completion.chunk",
-                                "created": int(time.time()),
-                                "model": "tekken-v7",
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {
-                                            "role": "assistant",
-                                            "content": buffer,
-                                            "function_call": None,
-                                            "tool_calls": None
-                                        },
-                                        "finish_reason": None
-                                    }
-                                ]
-                            }
-                            buffer = ""
-                    except json.JSONDecodeError:
-                        # If we can't parse the tool call, treat it as regular content
-                        in_tool_call = False
-                        buffer = f"[TOOL_CALLS]▁{tool_call_buffer}{chunk}"
-                        yield {
-                            "id": response_id,
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": "tekken-v7",
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {
-                                        "role": "assistant",
-                                        "content": buffer,
-                                        "function_call": None,
-                                        "tool_calls": None
-                                    },
-                                    "finish_reason": None
-                                }
-                            ]
-                        }
-                        buffer = ""
-                else:
-                    # Still collecting the tool call
-                    tool_call_buffer += chunk
-        
-        # End of stream, check if we have an uncompleted tool call
-        if in_tool_call and not tool_call_sent:
-            try:
-                # Try to parse as JSON even without closing tag
-                tool_calls_data = json.loads(tool_call_buffer)
-                if not isinstance(tool_calls_data, list):
-                    tool_calls_data = [tool_calls_data]
-                
-                formatted_tool_calls = []
-                for i, call in enumerate(tool_calls_data):
-                    formatted_tool_calls.append({
-                        "id": f"call_{uuid.uuid4().hex[:6]}",
-                        "type": "function",
-                        "function": {
-                            "name": call.get("name", ""),
-                            "arguments": json.dumps(call.get("arguments", {}), indent=2)
-                        }
-                    })
-                
-                yield {
-                    "id": response_id,
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": "tekken-v7",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {
-                                "role": "assistant",
-                                "content": "",
-                                "function_call": None,
-                                "tool_calls": formatted_tool_calls
-                            },
-                            "finish_reason": None
-                        }
-                    ]
-                }
-            except json.JSONDecodeError:
-                # Failed to parse, send as regular content
-                if tool_call_buffer:
-                    yield {
-                        "id": response_id,
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": "tekken-v7",
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {
-                                    "role": "assistant",
-                                    "content": f"[TOOL_CALLS]▁{tool_call_buffer}",
-                                    "function_call": None,
-                                    "tool_calls": None
-                                },
-                                "finish_reason": None
-                            }
+                # Only yield content if there's actually content
+                if content_text:
+                    yield ChatCompletionChunk(
+                        id=f"chatcmpl_{uuid.uuid4().hex[:8]}",
+                        object="chat.completion.chunk",
+                        created=int(time.time()),
+                        model="gpt-4o-mini",  # Placeholder
+                        choices=[
+                            ChatCompletionStreamChoice(
+                                delta=ChoiceDelta(
+                                    content=content_text,
+                                    function_call=None,
+                                    role="assistant",
+                                    tool_calls=None
+                                ),
+                                finish_reason=None,
+                                index=0
+                            )
                         ]
-                    }
+                    )
+                
+                # Mark content as complete
+                content_complete = True
+                
+                # Start collecting tool calls
+                tool_calls_text = "[TOOL_CALLS]" + content_parts[1]
+            elif not content_complete:
+                # Still collecting content
+                yield ChatCompletionChunk(
+                    id=f"chatcmpl_{uuid.uuid4().hex[:8]}",
+                    object="chat.completion.chunk",
+                    created=int(time.time()),
+                    model="gpt-4o-mini",  # Placeholder
+                    choices=[
+                        ChatCompletionStreamChoice(
+                            delta=ChoiceDelta(
+                                content=chunk,
+                                function_call=None,
+                                role="assistant",
+                                tool_calls=None
+                            ),
+                            finish_reason=None,
+                            index=0
+                        )
+                    ]
+                )
+            else:
+                # Continue collecting tool calls text
+                tool_calls_text += chunk
+                
+                # Try to parse tool calls to see if they're complete
+                tool_calls = self._parse_tool_calls(tool_calls_text)
+                
+                # If we have valid tool calls and haven't sent them yet
+                if tool_calls and not tool_calls_sent:
+                    yield ChatCompletionChunk(
+                        id=f"chatcmpl_{uuid.uuid4().hex[:8]}",
+                        object="chat.completion.chunk",
+                        created=int(time.time()),
+                        model="gpt-4o-mini",  # Placeholder
+                        choices=[
+                            ChatCompletionStreamChoice(
+                                delta=ChoiceDelta(
+                                    content="",
+                                    function_call=None,
+                                    role="assistant",
+                                    tool_calls=tool_calls
+                                ),
+                                finish_reason=None,
+                                index=0
+                            )
+                        ]
+                    )
+                    tool_calls_sent = True
         
-        # Send the final chunk with finish_reason
-        finish_reason = "tool_calls" if tool_call_sent else "stop"
-        yield {
-            "id": response_id,
-            "object": "chat.completion.chunk",
-            "created": int(time.time()),
-            "model": "tekken-v7",
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": finish_reason
-                }
+        # Final chunk to signal completion
+        finish_reason = "tool_calls" if tool_calls_sent else "stop"
+        yield ChatCompletionChunk(
+            id=f"chatcmpl_{uuid.uuid4().hex[:8]}",
+            object="chat.completion.chunk",
+            created=int(time.time()),
+            model="gpt-4o-mini",  # Placeholder
+            choices=[
+                ChatCompletionStreamChoice(
+                    delta=ChoiceDelta(
+                        content=None,
+                        function_call=None,
+                        role=None,
+                        tool_calls=None
+                    ),
+                    finish_reason=finish_reason,
+                    index=0
+                )
             ]
-        }
+        )
