@@ -138,7 +138,7 @@ class TekkenV7:
         
         if stream:
             # Return the async generator directly
-            return self._create_stream_iterator(text)
+            return await self._create_stream_iterator(text)
         else:
             return await self._non_stream_chat_completion(text)
     
