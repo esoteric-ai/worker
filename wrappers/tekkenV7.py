@@ -107,7 +107,7 @@ class TekkenV7:
         Returns:
             Chat completion response in OpenAI format
         """
-        max_tokens = params.max_tokens if params.max_tokens else 500
+        max_tokens = 500
         response = await self.backend.completion(text, False, max_tokens)
         
         # Parse the completion text
@@ -200,7 +200,7 @@ class TekkenV7:
         Returns:
             AsyncIterator of chat completion chunks
         """
-        max_tokens = params.max_tokens if params.max_tokens else 500
+        max_tokens = 500
         stream = await self.backend.completion(text, True, max_tokens)
         
         response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
