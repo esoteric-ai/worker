@@ -36,7 +36,7 @@ class TestTabbyBackend():
         
         chat = [
             {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Hello, how are you? Please tell me what are you able to do."},
+            {"role": "user", "content": "Hello, how are you? Please get current weather in Moscow."},
         ]
         
         wrapper = TekkenV7(self.backend)
