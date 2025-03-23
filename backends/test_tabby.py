@@ -2,6 +2,7 @@ import asyncio
 from typing import Dict, Any, List
 from backends.tabby import TabbyBackend, TabbyBackendConfig
 from backends.base import ModelConfig, ModelLoadConfig, ModelPerformanceMetrics
+from wrappers.tekkenV7 import TekkenV7
 
 class TestTabbyBackend():
     def setUp(self):
@@ -33,14 +34,15 @@ class TestTabbyBackend():
         
         await self.backend.load_model(model_config)
         
-        stream = await self.backend.completion("A quick brown fox", True, 300)
+        chat = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Hello, how are you? Please tell me what are you able to do."},
+        ]
         
-        result = ""
-        
-        async for event in stream:
-            result += event.choices[0].text
-        
+        wrapper = TekkenV7(self.backend)
+        result = await wrapper.chat_completion(chat)
         print(result)
+        
         
         await self.backend.unload_model()
     
