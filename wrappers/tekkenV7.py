@@ -208,29 +208,7 @@ class TekkenV7:
                 if not content_complete and "[TOOL_CALLS]" in accumulated_text:
                     # Send all text before the tool calls marker as content
                     content_parts = accumulated_text.split("[TOOL_CALLS]", 1)
-                    content_text = content_parts[0].strip()
-                    
-                    # Only yield content if there's actually content
-                    if content_text:
-                        yield {
-                            "id": chat_id,
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": "gpt-4o-mini",  # Placeholder
-                            "choices": [
-                                {
-                                    "delta": {
-                                        "content": content_text,
-                                        "function_call": None,
-                                        "role": "assistant",
-                                        "tool_calls": None
-                                    },
-                                    "finish_reason": None,
-                                    "index": 0
-                                }
-                            ]
-                        }
-                    
+
                     # Mark content as complete
                     content_complete = True
                     
