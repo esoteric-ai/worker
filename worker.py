@@ -345,6 +345,26 @@ class WorkerClient:
         ack = response.get("ack", False)
         print(f"[Worker] Server ack for completed tasks: {ack} (Count: {len(tasks)})")
 
+    async def send_stream_event_without_ack(self, task_id: str, event: Dict[str, Any]):
+        """
+        Send a streaming event for a specific task to the server without waiting for acknowledgment.
+        """
+        request_id = str(uuid.uuid4())
+        request = {
+            "action": "stream_event",
+            "request_id": request_id,
+            "task_id": task_id,
+            "event": event
+        }
+        try:
+            # Wait until the websocket is connected.
+            await self.ws_connected.wait()
+            await self.websocket.send(json.dumps(request))
+            return True
+        except Exception as e:
+            print(f"[Worker] Failed to send stream event for task {task_id}: {e}")
+            return False
+
     async def send_stream_event(self, task_id: str, event: Dict[str, Any]):
         """
         Send a streaming event for a specific task to the server.
@@ -398,13 +418,13 @@ class WorkerClient:
         Process a streamed response from the backend and send chunks to the server.
         """
         async for chunk in stream_iter:
-            # Send the chunk as a stream event
-            await self.send_stream_event(task_id, {
+            # Send the chunk as a stream event without waiting for ack
+            await self.send_stream_event_without_ack(task_id, {
                 "event": "chunk",
                 "data": chunk
             })
         
-        # Send stream end event
+        # Send stream end event and wait for acknowledgment
         await self.send_stream_event(task_id, {
             "event": "done"
         })
