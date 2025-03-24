@@ -167,8 +167,8 @@ class TekkenV7:
         response = await self.backend.completion(prompt, stream=False, max_tokens=max_tokens, params=params)
 
         # Get the completion text and check finish reason
-        completion_text = self._replace_special_chars(response.choices[0].text)
-        finish_reason = response.choices[0].finish_reason
+        completion_text = self._replace_special_chars(response['choices'][0]['text'])
+        finish_reason = response['choices'][0]['finish_reason']
 
         # If finish reason is length, return text without trying to parse tool calls
         if finish_reason == "length":
