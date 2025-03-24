@@ -221,7 +221,7 @@ class WorkerClient:
         POST /worker/register to get a worker_uid from the server.
         """
         backend_type = await self.backend.get_type()
-        
+        print(backend_type)
         body = {
             "name": self.worker_name,
             "backend_type": backend_type,

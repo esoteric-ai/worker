@@ -348,11 +348,11 @@ class TekkenV7:
         return stream_generator()
     
     async def benchmark_model(self, model: ModelConfig) -> ModelConfig:
-        await self.backend.benchmark_model(model)
+        return await self.backend.benchmark_model(model)
     
     async def get_type(self) -> Literal["Managed", "Instant"]:
         print("Returning backend type passthrough")
-        await self.backend.get_type()
+        return await self.backend.get_type()
 
     async def load_model(self, model: ModelConfig) -> None:
         await self.backend.load_model(model)
@@ -361,7 +361,7 @@ class TekkenV7:
         await self.backend.unload_model()
     
     async def completion(self, prompt: str,  stream: bool = False, params: GenerationParams = PRECISE_PARAMS) -> Union[str, AsyncIterator]:
-        await self.backend.completion(prompt, stream, params)
+        return await self.backend.completion(prompt, stream, params)
     
     async def _get_pid(self) ->  Optional[int]:
-        await self.backend._get_pid()
+        return await self.backend._get_pid()
