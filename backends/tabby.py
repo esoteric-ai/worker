@@ -256,7 +256,7 @@ class TabbyBackend(Backend):
                     )
 
                     async for chunk in stream_response:
-                        yield chunk
+                        yield chunk.model_dump()
 
                 return response_generator()
             else:
@@ -265,7 +265,7 @@ class TabbyBackend(Backend):
                     extra_body=extra_body,
                 )
 
-                return response
+                return response.model_dump()
             
         except Exception as e:
             print(f"ERROR in chat_completion: {type(e).__name__}: {str(e)}")
@@ -317,11 +317,18 @@ class TabbyBackend(Backend):
             )
 
             if stream:
+                async def response_generator():
+                    async for chunk in response:
+                        yield chunk.model_dump()
+
+                return response_generator()
+
+            if stream:
                 # Return the stream iterator directly
                 return response
             else:
                 # Process the response and return the string
-                return response
+                return response.model_dump()
 
         except Exception as e:
             print(f"ERROR in completion: {type(e).__name__}: {str(e)}")
