@@ -251,14 +251,14 @@ class TekkenV7:
 
             async for event in stream:
                 # Check if finish reason is 'length'
-                if event.choices[0].finish_reason == "length":
+                if event['choices'][0]['finish_reason'] == "length":
                     # Immediately return with finish reason 'length' and stop streaming
                     yield {
                         "model": "gpt-4o-mini",  # Placeholder
                         "choices": [
                             {
                                 "delta": {
-                                    "content": self._replace_special_chars(event.choices[0].text),
+                                    "content": self._replace_special_chars(event['choices'][0]['text']),
                                     "function_call": None,
                                     "role": None,
                                     "tool_calls": None
@@ -270,7 +270,7 @@ class TekkenV7:
                     }
                     return  # Stop generating more chunks
 
-                chunk = self._replace_special_chars(event.choices[0].text)
+                chunk = self._replace_special_chars(event['choices'][0]['text'])
                 accumulated_text += chunk
 
                 # Check if we have reached the tool calls marker
