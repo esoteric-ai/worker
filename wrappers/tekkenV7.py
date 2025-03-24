@@ -112,8 +112,11 @@ class TekkenV7:
                                 )
                             )
                         )
+                    temp = msg.get("content")
+                    if temp is not None and temp == "":
+                        temp = None
                     messages.append(AssistantMessage(
-                        content=msg.get("content"),
+                        content=temp,
                         tool_calls=tool_calls
                     ))
                 else:
@@ -307,21 +310,43 @@ class TekkenV7:
 
                     # If we have valid tool calls and haven't sent them yet
                     if tool_calls and not tool_calls_sent:
+                        # First send the tool calls with finish_reason = null
                         yield {
+                            "id": f"chatcmpl_{uuid.uuid4().hex[:8]}",
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
                             "model": "gpt-4o-mini",  # Placeholder
                             "choices": [
                                 {
                                     "delta": {
-                                        "content": "",
-                                        "function_call": None,
                                         "role": "assistant",
+                                        "content": "",
                                         "tool_calls": tool_calls
                                     },
-                                    "finish_reason": "tool_calls",  # Set finish reason here
+                                    "finish_reason": None,
                                     "index": 0
                                 }
                             ]
                         }
+                        
+                        # Then send an empty delta with finish_reason = "tool_calls"
+                        yield {
+                            "id": f"chatcmpl_{uuid.uuid4().hex[:8]}",
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": "gpt-4o-mini",  # Placeholder
+                            "choices": [
+                                {
+                                    "delta": {
+                                        "role": "assistant",
+                                        "content": ""
+                                    },
+                                    "finish_reason": "tool_calls",
+                                    "index": 0
+                                }
+                            ]
+                        }
+                        
                         tool_calls_sent = True
                         return  # Stop the stream after sending tool calls
 
