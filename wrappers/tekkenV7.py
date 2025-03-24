@@ -94,6 +94,8 @@ class TekkenV7:
 
         messages = []
         for msg in conversation:
+            print(msg)
+            
             if msg["role"] == "system":
                 messages.append(SystemMessage(content=msg["content"]))
             elif msg["role"] == "user":
@@ -160,7 +162,6 @@ class TekkenV7:
             )
         )
         text = tokenized.text
-        print("Formatted prompt: " + str(text))
 
         if stream:
             # Return the async generator directly
