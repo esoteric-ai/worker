@@ -51,7 +51,7 @@ class TekkenV7:
             # Create ToolCall dictionaries
             result = []
             for idx, call in enumerate(tool_calls_json):
-                call_id = f"call_{uuid.uuid4().hex[:8]}"
+                call_id = f"{uuid.uuid4().hex[:9]}"
                 
                 # Ensure arguments is a JSON string
                 arguments = call.get("arguments", {})
