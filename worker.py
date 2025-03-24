@@ -10,6 +10,7 @@ import httpx
 from backends.base import Backend, ModelConfig, ModelLoadConfig, ModelPerformanceMetrics
 from backends.generation_params import PRECISE_PARAMS
 from backends.tabby import TabbyBackend, TabbyBackendConfig
+from worker.wrappers.tekkenV7 import TekkenV7
 
 class WorkerClient:
     def __init__(self, config_path: str):
@@ -30,7 +31,8 @@ class WorkerClient:
                 run_arguments=cfg.get("tabby_run_arguments"),
                 environment=cfg.get("tabby_environment")
             )
-            self.backend: Backend = TabbyBackend(tabby_config)
+            self.real_backend = TabbyBackend(tabby_config)
+            self.backend = TekkenV7(self.real_backend)
         else:
             raise ValueError(f"Unsupported backend: {self.backend_type}")
 
