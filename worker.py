@@ -154,8 +154,7 @@ class WorkerClient:
         """
         Main entry point.
         """
-        await self.init_async_primitives()  # Initialize async objects on current event loop
-
+        
         # Find the active model config
         active_model = None
         for model_config in self.model_configs:
