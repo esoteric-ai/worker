@@ -201,31 +201,39 @@ class TabbyBackend(Backend):
             self.running = False
 
 
-    async def chat_completion(self, conversation: List[Dict[str, Any]], params: GenerationParams = PRECISE_PARAMS) -> str:
+    async def chat_completion(
+        self, 
+        conversation: List[Dict[str, Any]], 
+        stream: bool = False, 
+        tools = [],
+        max_tokens: int = 500, 
+        params: GenerationParams = PRECISE_PARAMS
+    ) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
         """
         Use the shared OpenAI client for chat completions with generation parameters.
         The API call is made using the aliased API model name.
+        Supports both streaming and non-streaming responses.
         """
-        
-        
+
         if not self.active_model:
             raise ValueError("No active model loaded. Call load_model() first.")
 
         request_body = {
             "model": self.active_model.get("api_name"),
             "messages": conversation,
+            "stream": stream,
         }
-        
+
         extra_body = {
             "temperature": params.get("temperature", 0.1),
-            "max_tokens": params.get("max_tokens", 700),
+            "max_tokens": max_tokens,
             "top_p": params.get("top_p", 1.0),
             "top_k": params.get("top_k", 1),
             "min_p": params.get("min_p", 0.0),
             "repetition_penalty": params.get("repetition_penalty", 1.0),
             "frequency_penalty": params.get("frequency_penalty", 0.0),
             "presence_penalty": params.get("presence_penalty", 0.0),
-            
+
             # Not implemented yet parameters
             "penalty_range": -1,
             "top_a": 0.0,
@@ -237,17 +245,28 @@ class TabbyBackend(Backend):
             "mirostat_tau": 5,
             "mirostat_eta": 0.1,
         }
-        
-        try:
-            response = await self.openai_client.chat.completions.create(
-                **request_body,
-                extra_body=extra_body,
-            )
-            
-            if not response.choices:
-                return ""
 
-            return response.choices[0].message.content
+        try:
+            if stream:
+                # Return an async generator that yields chunks
+                async def response_generator():
+                    stream_response = await self.openai_client.chat.completions.create(
+                        **request_body,
+                        extra_body=extra_body,
+                    )
+
+                    async for chunk in stream_response:
+                        yield chunk
+
+                return response_generator()
+            else:
+                response = await self.openai_client.chat.completions.create(
+                    **request_body,
+                    extra_body=extra_body,
+                )
+
+                return response
+            
         except Exception as e:
             print(f"ERROR in chat_completion: {type(e).__name__}: {str(e)}")
             # Re-raise to ensure benchmark correctly detects the failure

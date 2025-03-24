@@ -342,11 +342,11 @@ class Backend(ABC):
         pass
     
     @abstractmethod
-    async def completion(self, prompt: str,  stream: bool = False, params: GenerationParams = PRECISE_PARAMS) -> Union[str, AsyncIterator]:
+    async def completion(self, prompt: str,  stream: bool = False, max_tokens :int = 500, params: GenerationParams = PRECISE_PARAMS) -> Union[str, AsyncIterator]:
         pass
 
     @abstractmethod
-    async def chat_completion(self, conversation: List[Dict[str, Any]], params: GenerationParams = PRECISE_PARAMS) -> str:
+    async def chat_completion(self, conversation: List[Dict[str, Any]], stream: bool = False, tools = [], max_tokens :int = 500, params: GenerationParams = PRECISE_PARAMS) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
         pass
     
     @abstractmethod

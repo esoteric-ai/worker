@@ -2,16 +2,14 @@ import asyncio
 import json
 import uuid
 import sys
-from typing import List, Dict, Any, Optional
+from typing import AsyncIterator, List, Dict, Any, Optional
 
 import websockets
 import httpx
 
-from backends.base import Backend
-from backends.tabby import TabbyBackend
-from backends.ollama import OllamaBackend
-from backends.openai import OpenAIBackend
-
+from backends.base import Backend, ModelConfig, ModelLoadConfig, ModelPerformanceMetrics
+from backends.generation_params import PRECISE_PARAMS
+from backends.tabby import TabbyBackend, TabbyBackendConfig
 
 class WorkerClient:
     def __init__(self, config_path: str):
@@ -21,27 +19,21 @@ class WorkerClient:
         self.worker_name: str = cfg.get("worker_name", "my_worker")
         self.server_base_url: str = cfg.get("server_base_url", "http://localhost:8000")
         self.backend_type: str = cfg.get("backend", "TabbyAPI")
-        self.supported_models: List[str] = cfg.get("models", ["llama8b"])
-        model_aliases = cfg.get("model_aliases", {})
-
+        self.model_configs: List[ModelConfig] = cfg.get("model_configs", [])
+        self.active_model_alias: Optional[str] = cfg.get("active_model", None)
+        
         if self.backend_type == "TabbyAPI":
-            tabby_api_url = cfg.get("tabby_api_url", "http://127.0.0.1")
-            tabby_api_key = cfg.get("tabby_api_key", "")
-            self.backend: Backend = TabbyBackend(
-                tabby_api_url, tabby_api_key, model_aliases, supported_models=self.supported_models
+            tabby_config = TabbyBackendConfig(
+                base_url=cfg.get("tabby_api_url", "http://127.0.0.1"),
+                api_key=cfg.get("tabby_api_key"),
+                run_path=cfg.get("tabby_run_path"),
+                run_arguments=cfg.get("tabby_run_arguments"),
+                environment=cfg.get("tabby_environment")
             )
-        elif self.backend_type == "OllamaAPI":
-            ollama_api_url = cfg.get("ollama_api_url", "http://localhost:11434")
-            self.backend: Backend = OllamaBackend(ollama_api_url, model_aliases, supported_models=self.supported_models)
-        elif self.backend_type == "OpenAIAPI":
-            openai_api_url = cfg.get("openai_api_url", "https://api.targon.com")
-            openai_api_key = cfg.get("openai_api_key", "")
-            openai_rpm = cfg.get("openai_rpm", -1)
-            self.backend: Backend = OpenAIBackend(
-                openai_api_url, openai_api_key, model_aliases, supported_models=self.supported_models, rpm=openai_rpm
-            )
+            self.backend: Backend = TabbyBackend(tabby_config)
         else:
             raise ValueError(f"Unsupported backend: {self.backend_type}")
+
 
         self.worker_uid: Optional[str] = None
         self.websocket: Optional[websockets.WebSocketClientProtocol] = None
@@ -58,13 +50,6 @@ class WorkerClient:
 
         self.processing_tasks = set()
         self.reconnect_schedule = [5] * 10 + [60] * 10 + [3600] * 24
-
-    async def init_async_primitives(self):
-        # Initialize all asyncio primitives on the current event loop.
-        self.task_queue = asyncio.Queue()
-        self.completed_queue = asyncio.Queue()
-        self.tasks_available_event = asyncio.Event()
-        self.ws_connected = asyncio.Event()
 
     async def producer_loop(self):
         """
@@ -119,12 +104,30 @@ class WorkerClient:
         Wrapper to process a task and put it in the completed queue.
         """
         try:
-            processed_task = await self.process_one_task(task_data)
-            await self.completed_queue.put(processed_task)
+            # For streaming tasks, we don't put them in the completed queue 
+            # as they are sent chunk by chunk
+            if task_data.get("stream", False):
+                await self.process_one_task(task_data)
+            else:
+                processed_task = await self.process_one_task(task_data)
+                await self.completed_queue.put(processed_task)
         except Exception as e:
-            task_data_with_error = task_data
+            task_data_with_error = task_data.copy()
             task_data_with_error["error"] = str(e)
-            await self.completed_queue.put(task_data_with_error)
+            
+            # For streaming tasks, send an error event
+            if task_data.get("stream", False):
+                await self.send_stream_event(task_data_with_error["id"], {
+                    "event": "error",
+                    "data": str(e)
+                })
+                # Send stream end event
+                await self.send_stream_event(task_data_with_error["id"], {
+                    "event": "done"
+                })
+            else:
+                await self.completed_queue.put(task_data_with_error)
+            
             print(f"Error processing task: {e}")
 
     async def submit_loop(self):
@@ -150,16 +153,22 @@ class WorkerClient:
     async def run(self):
         """
         Main entry point.
-        
-        The persistent producer/consumer/submit loops are started once.
-        Then a reconnect loop is entered that connects to the websocket server,
-        starts the listen_forever loop, and if disconnected, waits for a delay
-        (using the schedule) before trying to reconnect.
         """
         await self.init_async_primitives()  # Initialize async objects on current event loop
 
-        active_model = await self.backend.load_model()
-        print(f"[Worker] Active model from backend: {active_model}")
+        # Find the active model config
+        active_model = None
+        for model_config in self.model_configs:
+            if model_config.get("alias") == self.active_model_alias:
+                active_model = model_config
+                break
+        
+        if active_model:
+            print(f"[Worker] Loading model: {active_model.get('alias')}")
+            await self.backend.load_model(active_model)
+            print(f"[Worker] Model loaded: {active_model.get('alias')}")
+        else:
+            print("[Worker] No active model specified or found in configs")
 
         await self.register_with_server()
         if not self.worker_uid:
@@ -193,6 +202,7 @@ class WorkerClient:
                 # On disconnect, clear the connection event and cancel pending requests.
                 self.ws_connected.clear()
                 self._cancel_pending_requests_due_to_disconnect()
+                
             # Determine the delay before the next reconnection attempt.
             delay = self.reconnect_schedule[min(reconnect_attempt, len(self.reconnect_schedule) - 1)]
             print(f"[Worker] Disconnected. Reconnecting in {delay} seconds...")
@@ -203,11 +213,13 @@ class WorkerClient:
         """
         POST /worker/register to get a worker_uid from the server.
         """
-        active_model = getattr(self.backend, "active_model", "unknown_model")
+        backend_type = await self.backend.get_type()
+        
         body = {
             "name": self.worker_name,
-            "supported_models": self.supported_models,
-            "active_model": active_model
+            "backend_type": backend_type,
+            "supported_models": self.model_configs,
+            "active_model": self.active_model_alias
         }
         url = f"{self.server_base_url}/worker/register"
         async with httpx.AsyncClient() as client:
@@ -318,13 +330,31 @@ class WorkerClient:
             response = await self.send_request(request)
         except Exception as e:
             print("[Worker] Failed to submit completed tasks:", e)
-            # Re-queue the tasks so they aren’t lost.
+            # Re-queue the tasks so they aren't lost.
             for task in tasks:
                 await self.completed_queue.put(task)
             return
 
         ack = response.get("ack", False)
         print(f"[Worker] Server ack for completed tasks: {ack} (Count: {len(tasks)})")
+
+    async def send_stream_event(self, task_id: str, event: Dict[str, Any]):
+        """
+        Send a streaming event for a specific task to the server.
+        """
+        request_id = str(uuid.uuid4())
+        request = {
+            "action": "stream_event",
+            "request_id": request_id,
+            "task_id": task_id,
+            "event": event
+        }
+        try:
+            response = await self.send_request(request)
+            return response.get("ack", False)
+        except Exception as e:
+            print(f"[Worker] Failed to send stream event for task {task_id}: {e}")
+            return False
 
     async def send_request(self, msg: dict) -> dict:
         """
@@ -356,15 +386,62 @@ class WorkerClient:
                 fut.set_exception(ConnectionError("WebSocket disconnected"))
         self.pending_requests.clear()
 
+    async def process_streamed_response(self, task_id: str, stream_iter: AsyncIterator[Dict[str, Any]]):
+        """
+        Process a streamed response from the backend and send chunks to the server.
+        """
+        async for chunk in stream_iter:
+            # Send the chunk as a stream event
+            await self.send_stream_event(task_id, {
+                "event": "chunk",
+                "data": chunk
+            })
+        
+        # Send stream end event
+        await self.send_stream_event(task_id, {
+            "event": "done"
+        })
+
     async def process_one_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process a single task via the backend.
         """
         conversation = task.get("conversation", [])
-        text = await self.backend.chat_completion(conversation)
-        task["text"] = text
-        task["worker_name"] = self.worker_name
-        return task
+        task_id = task.get("id")
+        
+        # Extract additional parameters from the task
+        stream = task.get("stream", False)
+        max_tokens = task.get("max_tokens", 500)
+        tools = task.get("tools", [])
+        
+        # Get generation params if provided
+        params = task.get("params", PRECISE_PARAMS)
+        
+        if stream:
+            # Process streaming response
+            stream_iter = await self.backend.chat_completion(
+                conversation, 
+                stream=True,
+                max_tokens=max_tokens,
+                params=params,
+                tools=tools
+            )
+            # Handle streaming response in a separate method
+            await self.process_streamed_response(task_id, stream_iter)
+            # For streaming tasks, we return None as we've already sent the response
+            return None
+        else:
+            # Process non-streaming response
+            response = await self.backend.chat_completion(
+                conversation, 
+                stream=False,
+                max_tokens=max_tokens,
+                params=params,
+                tools=tools
+            )
+            task["response"] = response
+            task["worker_name"] = self.worker_name
+            return task
 
 
 def main():
