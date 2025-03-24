@@ -121,11 +121,9 @@ class TekkenV7:
                     else:
                         # Only pass content parameter when it has a meaningful value
                         messages.append(AssistantMessage(
-                            content=temp,
-                            tool_calls=tool_calls
+                            content=temp
                         ))
                     
-                    print(messages)
                 else:
                     messages.append(AssistantMessage(content=msg.get("content")))
             elif msg["role"] == "tool":
