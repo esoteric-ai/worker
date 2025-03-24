@@ -351,6 +351,7 @@ class TekkenV7:
         await self.backend.benchmark_model(model)
     
     async def get_type(self) -> Literal["Managed", "Instant"]:
+        print("Returning backend type passthrough")
         await self.backend.get_type()
 
     async def load_model(self, model: ModelConfig) -> None:

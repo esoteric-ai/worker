@@ -3,7 +3,7 @@ import asyncio
 import os
 import subprocess
 import sys
-from typing import AsyncIterator, List, Dict, Any, Optional, TypedDict, Union
+from typing import AsyncIterator, List, Dict, Any, Literal, Optional, TypedDict, Union
 
 from backends.base import Backend, ModelConfig
 from backends.generation_params import GenerationParams, PRECISE_PARAMS
@@ -38,7 +38,8 @@ class TabbyBackend(Backend):
     async def _get_pid(self) -> Optional[int]:
         return self.pid
 
-    async def get_type(self) -> str:
+    async def get_type(self) -> Literal["Managed", "Instant"]:
+        print("Returning backend type: Managed")
         return "Managed"
     
     
