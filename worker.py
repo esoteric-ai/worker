@@ -155,6 +155,12 @@ class WorkerClient:
         Main entry point.
         """
         
+        # Initialize async primitives that were only declared in __init__
+        self.task_queue = asyncio.Queue()
+        self.completed_queue = asyncio.Queue()
+        self.tasks_available_event = asyncio.Event()
+        self.ws_connected = asyncio.Event()
+        
         # Find the active model config
         active_model = None
         for model_config in self.model_configs:
