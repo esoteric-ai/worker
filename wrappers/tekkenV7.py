@@ -120,7 +120,7 @@ class TekkenV7:
                     messages.append(AssistantMessage(content=msg.get("content")))
             elif msg["role"] == "tool":
                 # Handle tool messages with tool_call_id
-                tool_call_id = msg.get("tool_call_id", None)
+                tool_call_id = msg.get("tool_call_id", f"call_{uuid.uuid4().hex[:8]}")
 
                 messages.append(ToolMessage(
                     tool_call_id=tool_call_id,
