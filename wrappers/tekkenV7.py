@@ -134,11 +134,11 @@ class TekkenV7:
                     if msg.get("content", "") != "":
                         messages.append(AssistantMessage(content=msg.get("content")))
                     else:
-                        messages.append(AssistantMessage(content="<tool calls>"))
+                        messages.append(AssistantMessage(content="<System message: Assistant was calling tools here. Tool call was removed to save context.>"))
                     print("MSG1")
             elif msg["role"] == "tool":
                 # Handle tool messages with tool_call_id
-                tool_call_id = msg.get("tool_call_id", f"call_{uuid.uuid4().hex[:8]}")
+                tool_call_id = msg.get("tool_call_id", f"{uuid.uuid4().hex[:9]}")
 
                 messages.append(ToolMessage(
                     tool_call_id=tool_call_id,
