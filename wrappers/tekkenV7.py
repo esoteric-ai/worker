@@ -348,19 +348,19 @@ class TekkenV7:
         return stream_generator()
     
     async def benchmark_model(self, model: ModelConfig) -> ModelConfig:
-        self.backend.benchmark_model(model)
+        await self.backend.benchmark_model(model)
     
     async def get_type(self) -> Literal["Managed", "Instant"]:
-        self.backend.get_type()
+        await self.backend.get_type()
 
     async def load_model(self, model: ModelConfig) -> None:
-        self.backend.load_model(model)
+        await self.backend.load_model(model)
 
     async def unload_model(self) -> None:
-        self.backend.unload_model()
+        await self.backend.unload_model()
     
     async def completion(self, prompt: str,  stream: bool = False, params: GenerationParams = PRECISE_PARAMS) -> Union[str, AsyncIterator]:
-        self.backend.completion(prompt, stream, params)
+        await self.backend.completion(prompt, stream, params)
     
     async def _get_pid(self) ->  Optional[int]:
-        self.backend._get_pid()
+        await self.backend._get_pid()
