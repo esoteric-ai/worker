@@ -319,30 +319,31 @@ class TekkenV7:
                                         "role": "assistant",
                                         "tool_calls": tool_calls
                                     },
-                                    "finish_reason": None,
+                                    "finish_reason": "tool_calls",  # Set finish reason here
                                     "index": 0
                                 }
                             ]
                         }
                         tool_calls_sent = True
+                        return  # Stop the stream after sending tool calls
 
-            # Final chunk to signal completion
-            finish_reason = "tool_calls" if tool_calls_sent else "stop"
-            yield {
-                "model": "gpt-4o-mini",  # Placeholder
-                "choices": [
-                    {
-                        "delta": {
-                            "content": None,
-                            "function_call": None,
-                            "role": None,
-                            "tool_calls": None
-                        },
-                        "finish_reason": finish_reason,
-                        "index": 0
-                    }
-                ]
-            }
+            # Only send final chunk if no tool calls were sent
+            if not tool_calls_sent:
+                yield {
+                    "model": "gpt-4o-mini",  # Placeholder
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": None,
+                                "function_call": None,
+                                "role": None,
+                                "tool_calls": None
+                            },
+                            "finish_reason": "stop",
+                            "index": 0
+                        }
+                    ]
+                }
 
         # Return the async generator
         return stream_generator()
