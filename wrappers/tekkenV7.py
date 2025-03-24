@@ -114,11 +114,18 @@ class TekkenV7:
                         )
                     temp = msg.get("content")
                     if temp is not None and temp == "":
-                        temp = None
-                    messages.append(AssistantMessage(
-                        content=temp,
-                        tool_calls=tool_calls
-                    ))
+                        # Don't set content at all if it's an empty string
+                        messages.append(AssistantMessage(
+                            tool_calls=tool_calls
+                        ))
+                    else:
+                        # Only pass content parameter when it has a meaningful value
+                        messages.append(AssistantMessage(
+                            content=temp,
+                            tool_calls=tool_calls
+                        ))
+                    
+                    print(messages)
                 else:
                     messages.append(AssistantMessage(content=msg.get("content")))
             elif msg["role"] == "tool":
