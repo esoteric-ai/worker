@@ -20,7 +20,7 @@ class WorkerClient:
 
         self.worker_name: str = cfg.get("worker_name", "my_worker")
         self.server_base_url: str = cfg.get("server_base_url", "http://localhost:8000")
-        self.backend_type: str = cfg.get("backend", "TabbyAPI", "Ollama")
+        self.backend_type: str = cfg.get("backend", "TabbyAPI")
         self.model_configs: List[ModelConfig] = cfg.get("model_configs", [])
         self.active_model_alias: Optional[str] = cfg.get("active_model", None)
         
