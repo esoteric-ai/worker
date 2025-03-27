@@ -1,6 +1,7 @@
 # backends/ollama.py
 import asyncio
 import os
+import pwd
 import subprocess
 import sys
 from typing import AsyncIterator, List, Dict, Any, Literal, Optional, TypedDict, Union
@@ -131,7 +132,6 @@ class OllamaBackend(Backend):
         try:
             cmd = [run_path] + (run_arguments.split() if run_arguments else [])
             
-            # Create kwargs for subprocess.Popen
             kwargs = {'env': environment}
             
             # On Unix systems, create a new process group

@@ -480,6 +480,23 @@ class WorkerClient:
             task["response"] = response
             task["worker_name"] = self.worker_name
             return task
+    
+    async def shutdown(self):
+        """Gracefully shut down the worker and unload models"""
+        print("\n[Worker] Shutting down, unloading models...")
+        try:
+            if hasattr(self, 'real_backend') and self.real_backend:
+                await self.real_backend.unload_model()
+                print("[Worker] Model successfully unloaded")
+        except Exception as e:
+            print(f"[Worker] Error during model unload: {str(e)}")
+        
+        # Cancel all running tasks
+        for task in self.processing_tasks:
+            if not task.done():
+                task.cancel()
+                
+        print("[Worker] Shutdown complete")
 
 
 def main():
@@ -487,7 +504,31 @@ def main():
     if len(sys.argv) > 1:
         config_path = sys.argv[1]
     worker = WorkerClient(config_path)
-    asyncio.run(worker.run())
+    
+    # Set up signal handlers for graceful shutdown
+    loop = asyncio.get_event_loop()
+    
+    # Define shutdown handler
+    async def shutdown_handler(sig):
+        print(f"\n[Worker] Received signal {sig.name}, shutting down...")
+        await worker.shutdown()
+        loop.stop()
+    
+    # Register signal handlers
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(
+            sig,
+            lambda s=sig: asyncio.create_task(shutdown_handler(s))
+        )
+    
+    try:
+        loop.run_until_complete(worker.run())
+    except KeyboardInterrupt:
+        # This is a fallback in case the signal handler doesn't catch it
+        print("\n[Worker] Keyboard interrupt received, shutting down...")
+        loop.run_until_complete(worker.shutdown())
+    finally:
+        loop.close()
 
 
 if __name__ == "__main__":
