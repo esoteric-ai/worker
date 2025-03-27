@@ -10,6 +10,7 @@ import httpx
 from backends.base import Backend, ModelConfig, ModelLoadConfig, ModelPerformanceMetrics
 from backends.generation_params import PRECISE_PARAMS
 from backends.tabby import TabbyBackend, TabbyBackendConfig
+from worker.backends.ollama import OllamaBackend, OllamaBackendConfig
 from wrappers.tekkenV7 import TekkenV7
 
 class WorkerClient:
@@ -19,7 +20,7 @@ class WorkerClient:
 
         self.worker_name: str = cfg.get("worker_name", "my_worker")
         self.server_base_url: str = cfg.get("server_base_url", "http://localhost:8000")
-        self.backend_type: str = cfg.get("backend", "TabbyAPI")
+        self.backend_type: str = cfg.get("backend", "TabbyAPI", "Ollama")
         self.model_configs: List[ModelConfig] = cfg.get("model_configs", [])
         self.active_model_alias: Optional[str] = cfg.get("active_model", None)
         
@@ -33,6 +34,16 @@ class WorkerClient:
             )
             self.real_backend = TabbyBackend(tabby_config)
             self.backend = TekkenV7(self.real_backend)
+        elif self.backend_type == "Ollama":
+            ollama_config = OllamaBackendConfig(
+                base_url=cfg.get("ollama_api_url", "http://127.0.0.1"),
+                api_key=cfg.get("ollama_api_key"),
+                run_path=cfg.get("ollama_run_path"),
+                run_arguments=cfg.get("ollama_run_arguments"),
+                environment=cfg.get("ollama_environment")
+            )
+            self.real_backend = OllamaBackend(ollama_config)
+            self.backend = self.real_backend
         else:
             raise ValueError(f"Unsupported backend: {self.backend_type}")
 
