@@ -10,7 +10,7 @@ import httpx
 from backends.base import Backend, ModelConfig, ModelLoadConfig, ModelPerformanceMetrics
 from backends.generation_params import PRECISE_PARAMS
 from backends.tabby import TabbyBackend, TabbyBackendConfig
-from worker.backends.ollama import OllamaBackend, OllamaBackendConfig
+from backends.ollama import OllamaBackend, OllamaBackendConfig
 from wrappers.tekkenV7 import TekkenV7
 
 class WorkerClient:
