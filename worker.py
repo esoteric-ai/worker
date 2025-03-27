@@ -513,6 +513,7 @@ def main():
     async def shutdown_handler(sig):
         print(f"\n[Worker] Received signal {sig.name}, shutting down...")
         await worker.shutdown()
+        
         loop.stop()
     
     # Register signal handlers

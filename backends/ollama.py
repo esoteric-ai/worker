@@ -115,6 +115,7 @@ class OllamaBackend(Backend):
             print(f"[OllamaBackend] Successfully unloaded model: {api_name}")
             self.active_model = None
 
+            await self.stop()
         except Exception as e:
             raise RuntimeError(f"Failed to unload model: {str(e)}")
 
