@@ -2,6 +2,7 @@ import asyncio
 import json
 import uuid
 import sys
+import signal
 from typing import AsyncIterator, List, Dict, Any, Optional
 
 import websockets
