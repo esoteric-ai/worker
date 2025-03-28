@@ -1,7 +1,6 @@
 # backends/ollama.py
 import asyncio
 import os
-import pwd
 import subprocess
 import sys
 from typing import AsyncIterator, List, Dict, Any, Literal, Optional, TypedDict, Union

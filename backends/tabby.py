@@ -105,7 +105,7 @@ class TabbyBackend(Backend):
                 )
                 response.raise_for_status()
 
-            print(f"[TabbyBackend] Successfully unloaded model: {self.active_model.get("api_name")}")
+            print(f"[TabbyBackend] Successfully unloaded model: {self.active_model.get('api_name')}")
 
             self.active_model = None
 

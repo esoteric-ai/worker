@@ -4,6 +4,7 @@ import uuid
 import sys
 import signal
 from typing import AsyncIterator, List, Dict, Any, Optional, TypedDict, Union
+
 import torch
 
 import websockets
@@ -25,10 +26,12 @@ class BackendInstance:
         self.wrapper_name = wrapper_name
         self.gpu_allocation = model_config.get("performance_metrics", {}).get("vram_requirement", [])
         self.loaded_on_gpus = [i for i, vram in enumerate(self.gpu_allocation) if vram > 0]
-        
+
     @property
     def model_alias(self) -> str:
         return self.model_config.get("alias", "unknown")
+
+
 
 class WorkerClient:
     def __init__(self, config_path: str):
@@ -37,9 +40,10 @@ class WorkerClient:
 
         self.worker_name: str = cfg.get("worker_name", "my_worker")
         self.server_base_url: str = cfg.get("server_base_url", "http://localhost:8000")
+        
         self.model_configs: List[ModelConfig] = cfg.get("model_configs", [])
         
-        # Backend configurations
+         # Backend configurations
         self.backend_configs = {
             "TabbyAPI": TabbyBackendConfig(
                 base_url=cfg.get("tabby_api_url", "http://127.0.0.1"),
@@ -56,9 +60,10 @@ class WorkerClient:
                 environment=cfg.get("ollama_environment")
             )
         }
-
+        
         # Track loaded models and backends
         self.loaded_backends: Dict[str, BackendInstance] = {}  # key: unique instance ID
+        
 
         self.worker_uid: Optional[str] = None
         self.websocket: Optional[websockets.WebSocketClientProtocol] = None
@@ -67,7 +72,7 @@ class WorkerClient:
         self.batch_size: int = cfg.get("batch_size", 20)
         self.buffer_size = self.batch_size
 
-        # Async primitives
+        # Remove async primitives initialization from __init__
         self.task_queue: Optional[asyncio.Queue] = None
         self.completed_queue: Optional[asyncio.Queue] = None
         self.tasks_available_event: Optional[asyncio.Event] = None
@@ -114,15 +119,12 @@ class WorkerClient:
                 available_vram.append(total_vram - used_vram)
         return available_vram
     
-    def classify_models(self) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    async def classify_models(self) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
         Classify models into hot (can be loaded alongside current models)
         and cold (require unloading current models)
         """
-        available_vram = asyncio.run_coroutine_threadsafe(
-            self.get_available_vram(),
-            asyncio.get_running_loop()
-        ).result()
+        available_vram = await self.get_available_vram()
         
         # Create a map of GPU index -> used VRAM by currently loaded models
         gpu_usage = {i: 0 for i in range(len(available_vram))}
@@ -307,7 +309,6 @@ class WorkerClient:
                 await self.process_one_task(task_data)
             else:
                 processed_task = await self.process_one_task(task_data)
-                # Only add to completed queue if there's a result (non-streaming tasks)
                 if processed_task:
                     await self.completed_queue.put(processed_task)
         except Exception as e:
@@ -360,8 +361,8 @@ class WorkerClient:
         self.tasks_available_event = asyncio.Event()
         self.ws_connected = asyncio.Event()
         
-        # No default model loading - worker starts without any loaded models
         
+
         await self.register_with_server()
         if not self.worker_uid:
             print("[Worker] Failed to register, exiting.")
@@ -380,7 +381,7 @@ class WorkerClient:
         while True:
             try:
                 print(f"[Worker] Connecting to websocket: {ws_url}")
-                async with websockets.connect(ws_url, max_size=None, ping_timeout=1, close_timeout=1) as ws:
+                async with websockets.connect(ws_url, max_size=None, ping_timeout=300) as ws:
                     self.websocket = ws
                     self.ws_connected.set()
                     print("[Worker] WebSocket connection established.")
@@ -405,7 +406,6 @@ class WorkerClient:
         """
         POST /worker/register to get a worker_uid from the server.
         """
-        # We now report all backend types that we support, not just one
         supported_backend_types = ["TabbyAPI", "Ollama"] 
         
         body = {
@@ -491,7 +491,7 @@ class WorkerClient:
         """
         Ask the server for up to 'number' tasks, including hot/cold model information.
         """
-        hot_models, cold_models = self.classify_models()
+        hot_models, cold_models = await self.classify_models()
         
         request_id = str(uuid.uuid4())
         request = {
@@ -618,7 +618,7 @@ class WorkerClient:
             "event": "done"
         })
 
-    async def process_one_task(self, task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def process_one_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process a single task via the backend.
         """
@@ -629,35 +629,13 @@ class WorkerClient:
         stream = task.get("stream", False)
         max_tokens = task.get("max_tokens", 500)
         tools = task.get("tools", [])
+        
+        # Get generation params if provided
         params = task.get("params", PRECISE_PARAMS)
-        
-        # Load the model required for this task
-        backend_instance_id = await self.load_model_for_task(task)
-        if not backend_instance_id:
-            error_msg = f"Could not load model for task: {task_id}, model_alias: {task.get('model_alias', 'unknown')}"
-            print(f"[Worker] {error_msg}")
-            
-            if stream:
-                await self.send_stream_event(task_id, {
-                    "event": "error",
-                    "data": error_msg
-                })
-                await self.send_stream_event(task_id, {
-                    "event": "done"
-                })
-                return None
-            else:
-                task["error"] = error_msg
-                task["worker_name"] = self.worker_name
-                return task
-        
-        # Get the backend instance
-        backend_instance = self.loaded_backends[backend_instance_id]
-        backend = backend_instance.backend
         
         if stream:
             # Process streaming response
-            stream_iter = await backend.chat_completion(
+            stream_iter = await self.backend.chat_completion(
                 conversation, 
                 stream=True,
                 max_tokens=max_tokens,
@@ -670,7 +648,7 @@ class WorkerClient:
             return None
         else:
             # Process non-streaming response
-            response = await backend.chat_completion(
+            response = await self.backend.chat_completion(
                 conversation, 
                 stream=False,
                 max_tokens=max_tokens,
@@ -685,11 +663,11 @@ class WorkerClient:
         """Gracefully shut down the worker and unload models"""
         print("\n[Worker] Shutting down, unloading models...")
         try:
-            # Unload all active backends
-            for instance_id in list(self.loaded_backends.keys()):
-                await self.unload_backend(instance_id)
+            if hasattr(self, 'real_backend') and self.real_backend:
+                await self.real_backend.unload_model()
+                print("[Worker] Model successfully unloaded")
         except Exception as e:
-            print(f"[Worker] Error during shutdown: {str(e)}")
+            print(f"[Worker] Error during model unload: {str(e)}")
         
         # Cancel all running tasks
         for task in self.processing_tasks:
@@ -705,31 +683,33 @@ def main():
         config_path = sys.argv[1]
     worker = WorkerClient(config_path)
     
-    # Set up signal handlers for graceful shutdown
-    loop = asyncio.get_event_loop()
+    asyncio.run(worker.run())
     
-    # Define shutdown handler
-    async def shutdown_handler(sig):
-        print(f"\n[Worker] Received signal {sig.name}, shutting down...")
-        await worker.shutdown()
-        
-        loop.stop()
-    
-    # Register signal handlers
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(
-            sig,
-            lambda s=sig: asyncio.create_task(shutdown_handler(s))
-        )
-    
-    try:
-        loop.run_until_complete(worker.run())
-    except KeyboardInterrupt:
-        # This is a fallback in case the signal handler doesn't catch it
-        print("\n[Worker] Keyboard interrupt received, shutting down...")
-        loop.run_until_complete(worker.shutdown())
-    finally:
-        loop.close()
+    ## Set up signal handlers for graceful shutdown
+    #loop = asyncio.get_event_loop()
+    #
+    ## Define shutdown handler
+    #async def shutdown_handler(sig):
+    #    print(f"\n[Worker] Received signal {sig.name}, shutting down...")
+    #    await worker.shutdown()
+    #    
+    #    loop.stop()
+    #
+    ## Register signal handlers
+    #for sig in (signal.SIGINT, signal.SIGTERM):
+    #    loop.add_signal_handler(
+    #        sig,
+    #        lambda s=sig: asyncio.create_task(shutdown_handler(s))
+    #    )
+    #
+    #try:
+    #    loop.run_until_complete(worker.run())
+    #except KeyboardInterrupt:
+    #    # This is a fallback in case the signal handler doesn't catch it
+    #    print("\n[Worker] Keyboard interrupt received, shutting down...")
+    #    loop.run_until_complete(worker.shutdown())
+    #finally:
+    #    loop.close()
 
 
 if __name__ == "__main__":
