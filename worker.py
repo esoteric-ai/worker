@@ -315,55 +315,61 @@ class WorkerClient:
         Consumer that processes tasks respecting per-model parallel request limits.
         """
         while True:
-            # Clean up completed tasks.
+            # Clean up completed tasks
             self.processing_tasks = {t for t in self.processing_tasks if not t.done()}
-    
+
             # Check if we can process more tasks
             if len(self.processing_tasks) < self.batch_size:
-                # Try to get a task
-                try:
-                    # First check if queue is empty - use a non-blocking check
+                if self.task_queue.empty():
+                    await asyncio.sleep(0.1)
+                    continue
+
+                # Create a temporary queue to hold skipped tasks
+                temp_queue = asyncio.Queue()
+                processed_any = False
+                tasks_to_process = min(self.task_queue.qsize(), self.batch_size - len(self.processing_tasks))
+
+                for _ in range(tasks_to_process):
                     if self.task_queue.empty():
-                        # Queue is empty - yield control and try again later
-                        await asyncio.sleep(0.1)
-                        continue
-                    
-                    # Queue has tasks - peek at the next one
-                    peek_task = self.task_queue._queue[0]  # Access internal queue to peek
-    
+                        break
+
+                    task_data = await self.task_queue.get()
+
                     # First try to find a suitable model that's already loaded
-                    model_id = await self.get_suitable_model_for_task(peek_task)
-                    
+                    model_id = await self.get_suitable_model_for_task(task_data)
+
                     # If no suitable model is loaded, try to load one
                     if not model_id:
-                        model_id = await self.load_model_for_task(peek_task)
-                        
+                        model_id = await self.load_model_for_task(task_data)
+
                     if model_id:
                         # Check if the model has capacity for more tasks
                         model_config = self.loaded_backends[model_id].model_config
                         model_parallel_limit = model_config.get("performance_metrics", {}).get("parallel_requests", 1)
                         current_model_tasks = self.model_active_tasks.get(model_id, 0)
-    
+
                         if current_model_tasks < model_parallel_limit:
                             # We can process this task
-                            task_data = await self.task_queue.get()
-    
-                            # Create and start the task
                             task = asyncio.create_task(self.process_one_task_wrapper(task_data))
                             task.job_name = task_data.get("job_name")
                             self.processing_tasks.add(task)
-                            self.task_queue.task_done()
+                            processed_any = True
                         else:
-                            # Model is at capacity, wait for tasks to complete
-                            await asyncio.sleep(0.1)
+                            # Model is at capacity, put back in the temporary queue
+                            await temp_queue.put(task_data)
                     else:
                         # No suitable model could be loaded
-                        task_data = await self.task_queue.get()
                         task_data["error"] = "No suitable model could be found or loaded for this task"
                         await self.completed_queue.put(task_data)
-                        self.task_queue.task_done()
-                except (IndexError, asyncio.QueueEmpty):
-                    # Queue is empty or another error occurred
+
+                    self.task_queue.task_done()
+
+                # Put any skipped tasks back into the main queue
+                while not temp_queue.empty():
+                    await self.task_queue.put(await temp_queue.get())
+
+                # If we couldn't process any tasks, wait a bit
+                if not processed_any:
                     await asyncio.sleep(0.1)
             else:
                 # We're at global batch limit
