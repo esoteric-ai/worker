@@ -824,40 +824,30 @@ class WorkerClient:
         print("[Worker] Shutdown complete")
 
 
+async def run_with_graceful_shutdown(worker):
+    try:
+        await worker.run()
+    except KeyboardInterrupt:
+        print("\n[Worker] KeyboardInterrupt received (Ctrl+C), shutting down...")
+        await worker.shutdown()
+    except Exception as e:
+        print(f"\n[Worker] Error: {str(e)}")
+        await worker.shutdown()
+
 def main():
     config_path = "config.json"
     if len(sys.argv) > 1:
         config_path = sys.argv[1]
+    
     worker = WorkerClient(config_path)
     
-    asyncio.run(worker.run())
-    
-    ## Set up signal handlers for graceful shutdown
-    #loop = asyncio.get_event_loop()
-    #
-    ## Define shutdown handler
-    #async def shutdown_handler(sig):
-    #    print(f"\n[Worker] Received signal {sig.name}, shutting down...")
-    #    await worker.shutdown()
-    #    
-    #    loop.stop()
-    #
-    ## Register signal handlers
-    #for sig in (signal.SIGINT, signal.SIGTERM):
-    #    loop.add_signal_handler(
-    #        sig,
-    #        lambda s=sig: asyncio.create_task(shutdown_handler(s))
-    #    )
-    #
-    #try:
-    #    loop.run_until_complete(worker.run())
-    #except KeyboardInterrupt:
-    #    # This is a fallback in case the signal handler doesn't catch it
-    #    print("\n[Worker] Keyboard interrupt received, shutting down...")
-    #    loop.run_until_complete(worker.shutdown())
-    #finally:
-    #    loop.close()
-
+    try:
+        asyncio.run(run_with_graceful_shutdown(worker))
+    except KeyboardInterrupt:
+        # This is a fallback in case the inner exception handler doesn't catch it
+        # When running with asyncio.run(), KeyboardInterrupt can be raised at the event loop level
+        print("\n[Worker] Keyboard interrupt received at event loop level, exiting...")
+        # No need for explicit shutdown here as the event loop is already stopping
 
 if __name__ == "__main__":
     main()
