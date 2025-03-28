@@ -618,7 +618,7 @@ class WorkerClient:
             "event": "done"
         })
 
-    async def process_one_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
+    async def process_one_task(self, task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Process a single task via the backend.
         """
@@ -629,13 +629,35 @@ class WorkerClient:
         stream = task.get("stream", False)
         max_tokens = task.get("max_tokens", 500)
         tools = task.get("tools", [])
-        
-        # Get generation params if provided
         params = task.get("params", PRECISE_PARAMS)
+        
+        # Load the model required for this task
+        backend_instance_id = await self.load_model_for_task(task)
+        if not backend_instance_id:
+            error_msg = f"Could not load model for task: {task_id}, model_alias: {task.get('model_alias', 'unknown')}"
+            print(f"[Worker] {error_msg}")
+            
+            if stream:
+                await self.send_stream_event(task_id, {
+                    "event": "error",
+                    "data": error_msg
+                })
+                await self.send_stream_event(task_id, {
+                    "event": "done"
+                })
+                return None
+            else:
+                task["error"] = error_msg
+                task["worker_name"] = self.worker_name
+                return task
+        
+        # Get the backend instance
+        backend_instance = self.loaded_backends[backend_instance_id]
+        backend = backend_instance.backend
         
         if stream:
             # Process streaming response
-            stream_iter = await self.backend.chat_completion(
+            stream_iter = await backend.chat_completion(
                 conversation, 
                 stream=True,
                 max_tokens=max_tokens,
@@ -648,7 +670,7 @@ class WorkerClient:
             return None
         else:
             # Process non-streaming response
-            response = await self.backend.chat_completion(
+            response = await backend.chat_completion(
                 conversation, 
                 stream=False,
                 max_tokens=max_tokens,
@@ -663,11 +685,11 @@ class WorkerClient:
         """Gracefully shut down the worker and unload models"""
         print("\n[Worker] Shutting down, unloading models...")
         try:
-            if hasattr(self, 'real_backend') and self.real_backend:
-                await self.real_backend.unload_model()
-                print("[Worker] Model successfully unloaded")
+            # Unload all active backends
+            for instance_id in list(self.loaded_backends.keys()):
+                await self.unload_backend(instance_id)
         except Exception as e:
-            print(f"[Worker] Error during model unload: {str(e)}")
+            print(f"[Worker] Error during shutdown: {str(e)}")
         
         # Cancel all running tasks
         for task in self.processing_tasks:
