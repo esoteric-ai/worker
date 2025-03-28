@@ -323,43 +323,49 @@ class WorkerClient:
         while True:
             # Clean up completed tasks.
             self.processing_tasks = {t for t in self.processing_tasks if not t.done()}
-
+    
             # Check if we can process more tasks
             if len(self.processing_tasks) < self.batch_size:
-                # Peek at the next task to determine which model it needs
+                # Try to get a task
                 try:
-                    # Look at the next task without removing it
-                    if not self.task_queue.empty():
-                        peek_task = self.task_queue._queue[0]  # Access internal queue to peek
-                        # Try to determine which model this task would use
-                        model_id = await self.get_suitable_model_for_task(peek_task)
+                    # First check if queue is empty - use a non-blocking check
+                    if self.task_queue.empty():
+                        # Queue is empty - yield control and try again later
+                        await asyncio.sleep(0.1)
+                        continue
                         
-                        if model_id:
-                            # Check if the model has capacity for more tasks
-                            model_config = self.loaded_backends[model_id].model_config
-                            model_parallel_limit = model_config.get("performance_metrics", {}).get("parallel_requests", 1)
-                            current_model_tasks = self.model_active_tasks.get(model_id, 0)
-                            
-                            if current_model_tasks < model_parallel_limit:
-                                # We can process this task
-                                task_data = await self.task_queue.get()
-                                
-                                # Create and start the task
-                                task = asyncio.create_task(self.process_one_task_wrapper(task_data))
-                                task.job_name = task_data.get("job_name")
-                                self.processing_tasks.add(task)
-                                self.task_queue.task_done()
-                            else:
-                                # Model is at capacity, wait for tasks to complete
-                                await asyncio.sleep(0.1)
-                        else:
-                            # No suitable model found, remove the task
+                    # Queue has tasks - peek at the next one
+                    peek_task = self.task_queue._queue[0]  # Access internal queue to peek
+                    
+                    # Try to determine which model this task would use
+                    model_id = await self.get_suitable_model_for_task(peek_task)
+                    
+                    if model_id:
+                        # Check if the model has capacity for more tasks
+                        model_config = self.loaded_backends[model_id].model_config
+                        model_parallel_limit = model_config.get("performance_metrics", {}).get("parallel_requests", 1)
+                        current_model_tasks = self.model_active_tasks.get(model_id, 0)
+                        
+                        if current_model_tasks < model_parallel_limit:
+                            # We can process this task
                             task_data = await self.task_queue.get()
-                            task_data["error"] = "No suitable model found for this task"
-                            await self.completed_queue.put(task_data)
+                            
+                            # Create and start the task
+                            task = asyncio.create_task(self.process_one_task_wrapper(task_data))
+                            task.job_name = task_data.get("job_name")
+                            self.processing_tasks.add(task)
                             self.task_queue.task_done()
+                        else:
+                            # Model is at capacity, wait for tasks to complete
+                            await asyncio.sleep(0.1)
+                    else:
+                        # No suitable model found, remove the task
+                        task_data = await self.task_queue.get()
+                        task_data["error"] = "No suitable model found for this task"
+                        await self.completed_queue.put(task_data)
+                        self.task_queue.task_done()
                 except (IndexError, asyncio.QueueEmpty):
-                    # Queue is empty
+                    # Queue is empty or another error occurred
                     await asyncio.sleep(0.1)
             else:
                 # We're at global batch limit
