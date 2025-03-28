@@ -174,41 +174,56 @@ class WorkerClient:
         If not, loads the first compatible model from the list.
         Returns the backend instance ID for the model.
         """
+        print(f"[DEBUG] load_model_for_task: Starting for task ID {task.get('id')}")
+        print(f"[DEBUG] load_model_for_task: Models requested: {task.get('models', [])}")
+        
         model_aliases = task.get("models", [])
         if not model_aliases:
             # Fall back to legacy model_alias field if present
             legacy_alias = task.get("model_alias")
             if legacy_alias:
+                print(f"[DEBUG] load_model_for_task: Using legacy model_alias: {legacy_alias}")
                 model_aliases = [legacy_alias]
             else:
+                print(f"[DEBUG] load_model_for_task: No models specified in task")
                 return None
 
         # First pass: check if any model is already loaded
+        print(f"[DEBUG] load_model_for_task: First pass - checking if any model is already loaded")
         for model_alias in model_aliases:
             for instance_id, backend_instance in self.loaded_backends.items():
                 if backend_instance.model_alias == model_alias:
-                    print(f"[Worker] Using already loaded model: {model_alias}")
+                    print(f"[DEBUG] load_model_for_task: Using already loaded model: {model_alias}, instance_id: {instance_id}")
                     return instance_id
+        
+        print(f"[DEBUG] load_model_for_task: No requested model is currently loaded")
 
         # Second pass: try to load one of the models
+        print(f"[DEBUG] load_model_for_task: Second pass - trying to load one of the models")
         for model_alias in model_aliases:
+            print(f"[DEBUG] load_model_for_task: Trying to load model: {model_alias}")
             # Find model config
             model_config = None
             for config in self.model_configs:
                 if config.get("alias") == model_alias:
                     model_config = config
+                    print(f"[DEBUG] load_model_for_task: Found config for model: {model_alias}")
                     break
 
             if not model_config:
-                print(f"[Worker] Model {model_alias} not found in configurations")
+                print(f"[DEBUG] load_model_for_task: Model {model_alias} not found in configurations")
                 continue  # Try next model
 
             # Check if we need to unload models to make space
             vram_requirements = model_config.get("performance_metrics", {}).get("vram_requirement", [])
             available_vram = await self.get_available_vram()
 
+            print(f"[DEBUG] load_model_for_task: Model {model_alias} VRAM requirements: {vram_requirements}")
+            print(f"[DEBUG] load_model_for_task: Available VRAM: {available_vram}")
+
             # Extend vram_requirements if it's shorter than available_vram
             vram_requirements = vram_requirements + [0] * (len(available_vram) - len(vram_requirements))
+            print(f"[DEBUG] load_model_for_task: Extended VRAM requirements: {vram_requirements}")
 
             # Check if we need to unload models
             gpus_to_free = []
@@ -218,35 +233,54 @@ class WorkerClient:
 
                 if vram_needed > 0 and available_vram[gpu_idx] < vram_needed:
                     gpus_to_free.append(gpu_idx)
+                    print(f"[DEBUG] load_model_for_task: Need to free GPU {gpu_idx}: required {vram_needed}MB, available {available_vram[gpu_idx]}MB")
+            
+            print(f"[DEBUG] load_model_for_task: GPUs that need to be freed: {gpus_to_free}")
 
             # Unload models that use GPUs we need to free
             if gpus_to_free:
                 backends_to_unload = []
+                print(f"[DEBUG] load_model_for_task: Current loaded backends: {[f'{id}:{inst.model_alias}' for id, inst in self.loaded_backends.items()]}")
                 for instance_id, backend_instance in self.loaded_backends.items():
+                    print(f"[DEBUG] load_model_for_task: Checking backend {instance_id} ({backend_instance.model_alias}) loaded on GPUs: {backend_instance.loaded_on_gpus}")
                     for gpu_idx in gpus_to_free:
                         if gpu_idx in backend_instance.loaded_on_gpus:
                             backends_to_unload.append(instance_id)
+                            print(f"[DEBUG] load_model_for_task: Will unload backend {instance_id} ({backend_instance.model_alias}) to free GPU {gpu_idx}")
                             break
 
+                print(f"[DEBUG] load_model_for_task: Backends to unload: {backends_to_unload}")
                 for instance_id in backends_to_unload:
-                    await self.unload_backend(instance_id)
+                    print(f"[DEBUG] load_model_for_task: Unloading backend {instance_id}")
+                    success = await self.unload_backend(instance_id)
+                    print(f"[DEBUG] load_model_for_task: Unload {'successful' if success else 'failed'} for {instance_id}")
+                    
+                # After unloading, check available VRAM again
+                available_vram_after = await self.get_available_vram()
+                print(f"[DEBUG] load_model_for_task: Available VRAM after unloading: {available_vram_after}")
 
             # Load the model
             backend_type = model_config.get("backend", "TabbyAPI")
+            print(f"[DEBUG] load_model_for_task: Creating backend instance for {model_alias}, type: {backend_type}")
             backend_instance = self._create_backend_instance(backend_type, model_config)
 
-            print(f"[Worker] Loading model: {model_config.get('alias')}")
-            await backend_instance.backend.load_model(model_config)
-            print(f"[Worker] Model loaded: {model_config.get('alias')}")
+            print(f"[DEBUG] load_model_for_task: Loading model: {model_config.get('alias')}")
+            try:
+                await backend_instance.backend.load_model(model_config)
+                print(f"[DEBUG] load_model_for_task: Model loaded successfully: {model_config.get('alias')}")
 
-            # Generate unique instance ID
-            instance_id = f"{model_alias}_{uuid.uuid4().hex[:8]}"
-            self.loaded_backends[instance_id] = backend_instance
+                # Generate unique instance ID
+                instance_id = f"{model_alias}_{uuid.uuid4().hex[:8]}"
+                print(f"[DEBUG] load_model_for_task: Created new instance ID: {instance_id}")
+                self.loaded_backends[instance_id] = backend_instance
 
-            return instance_id
+                return instance_id
+            except Exception as e:
+                print(f"[DEBUG] load_model_for_task: Error loading model {model_alias}: {str(e)}")
+                continue
 
         # If we get here, none of the models could be loaded
-        print(f"[Worker] Could not load any model from {model_aliases}")
+        print(f"[DEBUG] load_model_for_task: Could not load any model from {model_aliases}")
         return None
                     
     async def unload_backend(self, instance_id: str) -> bool:
