@@ -116,9 +116,9 @@ class WorkerClient:
         available_vram = []
         if torch.cuda.is_available():
             for i in range(torch.cuda.device_count()):
-                total_vram = torch.cuda.get_device_properties(i).total_memory // (1024 * 1024)
-                used_vram = torch.cuda.memory_reserved(i) // (1024 * 1024)
-                available_vram.append(total_vram - used_vram)
+                free, total = torch.cuda.mem_get_info(i)
+                
+                available_vram.append(free // (1024 * 1024))
         return available_vram
     
     async def classify_models(self) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
