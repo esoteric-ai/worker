@@ -158,7 +158,7 @@ class WorkerClient:
                     can_load_parallel = False
                     break
             
-            if can_load_parallel and not model_already_loaded:
+            if can_load_parallel or model_already_loaded:
                 hot_models.append(model_config)
             elif not model_already_loaded:
                 cold_models.append(model_config)
@@ -180,14 +180,14 @@ class WorkerClient:
                 model_aliases = [legacy_alias]
             else:
                 return None
-        
+
         # First pass: check if any model is already loaded
         for model_alias in model_aliases:
             for instance_id, backend_instance in self.loaded_backends.items():
                 if backend_instance.model_alias == model_alias:
                     print(f"[Worker] Using already loaded model: {model_alias}")
                     return instance_id
-        
+
         # Second pass: try to load one of the models
         for model_alias in model_aliases:
             # Find model config
@@ -196,27 +196,27 @@ class WorkerClient:
                 if config.get("alias") == model_alias:
                     model_config = config
                     break
-                    
+
             if not model_config:
                 print(f"[Worker] Model {model_alias} not found in configurations")
                 continue  # Try next model
-                
+
             # Check if we need to unload models to make space
             vram_requirements = model_config.get("performance_metrics", {}).get("vram_requirement", [])
             available_vram = await self.get_available_vram()
-            
+
             # Extend vram_requirements if it's shorter than available_vram
             vram_requirements = vram_requirements + [0] * (len(available_vram) - len(vram_requirements))
-            
+
             # Check if we need to unload models
             gpus_to_free = []
             for gpu_idx, vram_needed in enumerate(vram_requirements):
                 if gpu_idx >= len(available_vram):
                     break
-                    
+
                 if vram_needed > 0 and available_vram[gpu_idx] < vram_needed:
                     gpus_to_free.append(gpu_idx)
-                    
+
             # Unload models that use GPUs we need to free
             if gpus_to_free:
                 backends_to_unload = []
@@ -225,24 +225,24 @@ class WorkerClient:
                         if gpu_idx in backend_instance.loaded_on_gpus:
                             backends_to_unload.append(instance_id)
                             break
-                            
+
                 for instance_id in backends_to_unload:
                     await self.unload_backend(instance_id)
-            
+
             # Load the model
             backend_type = model_config.get("backend", "TabbyAPI")
             backend_instance = self._create_backend_instance(backend_type, model_config)
-            
+
             print(f"[Worker] Loading model: {model_config.get('alias')}")
             await backend_instance.backend.load_model(model_config)
             print(f"[Worker] Model loaded: {model_config.get('alias')}")
-            
+
             # Generate unique instance ID
             instance_id = f"{model_alias}_{uuid.uuid4().hex[:8]}"
             self.loaded_backends[instance_id] = backend_instance
-            
+
             return instance_id
-        
+
         # If we get here, none of the models could be loaded
         print(f"[Worker] Could not load any model from {model_aliases}")
         return None
