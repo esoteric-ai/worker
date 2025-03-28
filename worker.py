@@ -380,7 +380,7 @@ class WorkerClient:
         while True:
             try:
                 print(f"[Worker] Connecting to websocket: {ws_url}")
-                async with websockets.connect(ws_url, max_size=None, ping_timeout=300) as ws:
+                async with websockets.connect(ws_url, max_size=None, ping_timeout=1, close_timeout=1) as ws:
                     self.websocket = ws
                     self.ws_connected.set()
                     print("[Worker] WebSocket connection established.")
