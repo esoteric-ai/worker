@@ -3,7 +3,8 @@ import json
 import uuid
 import sys
 import signal
-from typing import AsyncIterator, List, Dict, Any, Optional
+from typing import AsyncIterator, List, Dict, Any, Optional, TypedDict, Union
+import torch
 
 import websockets
 import httpx
@@ -14,6 +15,21 @@ from backends.tabby import TabbyBackend, TabbyBackendConfig
 from backends.ollama import OllamaBackend, OllamaBackendConfig
 from wrappers.tekkenV7 import TekkenV7
 
+class BackendInstance:
+    """Represents a loaded backend instance with its model"""
+    def __init__(self, backend: Backend, model_config: Dict[str, Any], 
+                 wrapper_name: Optional[str] = None, real_backend: Optional[Backend] = None):
+        self.backend = backend
+        self.real_backend = real_backend
+        self.model_config = model_config
+        self.wrapper_name = wrapper_name
+        self.gpu_allocation = model_config.get("performance_metrics", {}).get("vram_requirement", [])
+        self.loaded_on_gpus = [i for i, vram in enumerate(self.gpu_allocation) if vram > 0]
+        
+    @property
+    def model_alias(self) -> str:
+        return self.model_config.get("alias", "unknown")
+
 class WorkerClient:
     def __init__(self, config_path: str):
         with open(config_path, "r", encoding="utf-8") as f:
@@ -21,33 +37,28 @@ class WorkerClient:
 
         self.worker_name: str = cfg.get("worker_name", "my_worker")
         self.server_base_url: str = cfg.get("server_base_url", "http://localhost:8000")
-        self.backend_type: str = cfg.get("backend", "TabbyAPI")
         self.model_configs: List[ModelConfig] = cfg.get("model_configs", [])
-        self.active_model_alias: Optional[str] = cfg.get("active_model", None)
         
-        if self.backend_type == "TabbyAPI":
-            tabby_config = TabbyBackendConfig(
+        # Backend configurations
+        self.backend_configs = {
+            "TabbyAPI": TabbyBackendConfig(
                 base_url=cfg.get("tabby_api_url", "http://127.0.0.1"),
                 api_key=cfg.get("tabby_api_key"),
                 run_path=cfg.get("tabby_run_path"),
                 run_arguments=cfg.get("tabby_run_arguments"),
                 environment=cfg.get("tabby_environment")
-            )
-            self.real_backend = TabbyBackend(tabby_config)
-            self.backend = TekkenV7(self.real_backend)
-        elif self.backend_type == "Ollama":
-            ollama_config = OllamaBackendConfig(
+            ),
+            "Ollama": OllamaBackendConfig(
                 base_url=cfg.get("ollama_api_url", "http://127.0.0.1"),
                 api_key=cfg.get("ollama_api_key"),
                 run_path=cfg.get("ollama_run_path"),
                 run_arguments=cfg.get("ollama_run_arguments"),
                 environment=cfg.get("ollama_environment")
             )
-            self.real_backend = OllamaBackend(ollama_config)
-            self.backend = self.real_backend
-        else:
-            raise ValueError(f"Unsupported backend: {self.backend_type}")
+        }
 
+        # Track loaded models and backends
+        self.loaded_backends: Dict[str, BackendInstance] = {}  # key: unique instance ID
 
         self.worker_uid: Optional[str] = None
         self.websocket: Optional[websockets.WebSocketClientProtocol] = None
@@ -56,7 +67,7 @@ class WorkerClient:
         self.batch_size: int = cfg.get("batch_size", 20)
         self.buffer_size = self.batch_size
 
-        # Remove async primitives initialization from __init__
+        # Async primitives
         self.task_queue: Optional[asyncio.Queue] = None
         self.completed_queue: Optional[asyncio.Queue] = None
         self.tasks_available_event: Optional[asyncio.Event] = None
@@ -64,6 +75,178 @@ class WorkerClient:
 
         self.processing_tasks = set()
         self.reconnect_schedule = [5] * 10 + [60] * 10 + [3600] * 24
+
+    def _create_backend_instance(self, backend_type: str, model_config: Dict[str, Any]) -> BackendInstance:
+        """Create a new backend instance based on type and potential wrapper"""
+        wrapper_name = model_config.get("wrapper")
+        
+        if backend_type == "TabbyAPI":
+            real_backend = TabbyBackend(self.backend_configs["TabbyAPI"])
+            if wrapper_name == "TekkenV7":
+                backend = TekkenV7(real_backend)
+            else:
+                backend = real_backend
+                real_backend = None
+        elif backend_type == "Ollama":
+            real_backend = OllamaBackend(self.backend_configs["Ollama"])
+            if wrapper_name == "TekkenV7":
+                backend = TekkenV7(real_backend)
+            else:
+                backend = real_backend
+                real_backend = None
+        else:
+            raise ValueError(f"Unsupported backend: {backend_type}")
+            
+        return BackendInstance(
+            backend=backend,
+            real_backend=real_backend,
+            model_config=model_config,
+            wrapper_name=wrapper_name
+        )
+
+    async def get_available_vram(self) -> List[int]:
+        """Get available VRAM on each GPU in MB"""
+        available_vram = []
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                total_vram = torch.cuda.get_device_properties(i).total_memory // (1024 * 1024)
+                used_vram = torch.cuda.memory_reserved(i) // (1024 * 1024)
+                available_vram.append(total_vram - used_vram)
+        return available_vram
+    
+    def classify_models(self) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Classify models into hot (can be loaded alongside current models)
+        and cold (require unloading current models)
+        """
+        available_vram = asyncio.run_coroutine_threadsafe(
+            self.get_available_vram(),
+            asyncio.get_running_loop()
+        ).result()
+        
+        # Create a map of GPU index -> used VRAM by currently loaded models
+        gpu_usage = {i: 0 for i in range(len(available_vram))}
+        for backend_instance in self.loaded_backends.values():
+            for gpu_idx, vram_needed in enumerate(backend_instance.gpu_allocation):
+                if gpu_idx < len(gpu_usage) and vram_needed > 0:
+                    gpu_usage[gpu_idx] += vram_needed
+        
+        hot_models = []
+        cold_models = []
+        
+        # Check each model config if it can be loaded alongside current models
+        for model_config in self.model_configs:
+            vram_requirements = model_config.get("performance_metrics", {}).get("vram_requirement", [])
+            
+            # Extend vram_requirements if it's shorter than available_vram
+            vram_requirements = vram_requirements + [0] * (len(available_vram) - len(vram_requirements))
+            
+            # Check if model is already loaded
+            model_already_loaded = any(
+                backend.model_alias == model_config.get("alias")
+                for backend in self.loaded_backends.values()
+            )
+            
+            can_load_parallel = True
+            for gpu_idx, vram_needed in enumerate(vram_requirements):
+                if gpu_idx >= len(available_vram):
+                    break
+                    
+                if vram_needed > 0 and (available_vram[gpu_idx] - gpu_usage[gpu_idx]) < vram_needed:
+                    can_load_parallel = False
+                    break
+            
+            if can_load_parallel and not model_already_loaded:
+                hot_models.append(model_config)
+            elif not model_already_loaded:
+                cold_models.append(model_config)
+                
+        return hot_models, cold_models
+    
+    async def load_model_for_task(self, task: Dict[str, Any]) -> Optional[str]:
+        """
+        Load the model required for this task if not already loaded.
+        Returns the backend instance ID for the model.
+        """
+        model_alias = task.get("model_alias")
+        if not model_alias:
+            return None
+            
+        # Check if model is already loaded
+        for instance_id, backend_instance in self.loaded_backends.items():
+            if backend_instance.model_alias == model_alias:
+                return instance_id
+        
+        # Find model config
+        model_config = None
+        for config in self.model_configs:
+            if config.get("alias") == model_alias:
+                model_config = config
+                break
+                
+        if not model_config:
+            print(f"[Worker] Model {model_alias} not found in configurations")
+            return None
+            
+        # Check if we need to unload models to make space
+        vram_requirements = model_config.get("performance_metrics", {}).get("vram_requirement", [])
+        available_vram = await self.get_available_vram()
+        
+        # Extend vram_requirements if it's shorter than available_vram
+        vram_requirements = vram_requirements + [0] * (len(available_vram) - len(vram_requirements))
+        
+        # Check if we need to unload models
+        gpus_to_free = []
+        for gpu_idx, vram_needed in enumerate(vram_requirements):
+            if gpu_idx >= len(available_vram):
+                break
+                
+            if vram_needed > 0 and available_vram[gpu_idx] < vram_needed:
+                gpus_to_free.append(gpu_idx)
+                
+        # Unload models that use GPUs we need to free
+        if gpus_to_free:
+            backends_to_unload = []
+            for instance_id, backend_instance in self.loaded_backends.items():
+                for gpu_idx in gpus_to_free:
+                    if gpu_idx in backend_instance.loaded_on_gpus:
+                        backends_to_unload.append(instance_id)
+                        break
+                        
+            for instance_id in backends_to_unload:
+                await self.unload_backend(instance_id)
+        
+        # Load the model
+        backend_type = model_config.get("backend", "TabbyAPI")
+        backend_instance = self._create_backend_instance(backend_type, model_config)
+        
+        print(f"[Worker] Loading model: {model_config.get('alias')}")
+        await backend_instance.backend.load_model(model_config)
+        print(f"[Worker] Model loaded: {model_config.get('alias')}")
+        
+        # Generate unique instance ID
+        instance_id = f"{model_alias}_{uuid.uuid4().hex[:8]}"
+        self.loaded_backends[instance_id] = backend_instance
+        
+        return instance_id
+                    
+    async def unload_backend(self, instance_id: str) -> bool:
+        """Unload a backend instance by its ID"""
+        if instance_id not in self.loaded_backends:
+            return False
+            
+        backend_instance = self.loaded_backends[instance_id]
+        try:
+            if backend_instance.real_backend:
+                await backend_instance.real_backend.unload_model()
+            else:
+                await backend_instance.backend.unload_model()
+            print(f"[Worker] Unloaded model: {backend_instance.model_alias}")
+            del self.loaded_backends[instance_id]
+            return True
+        except Exception as e:
+            print(f"[Worker] Error unloading model {backend_instance.model_alias}: {str(e)}")
+            return False
 
     async def producer_loop(self):
         """
@@ -124,7 +307,9 @@ class WorkerClient:
                 await self.process_one_task(task_data)
             else:
                 processed_task = await self.process_one_task(task_data)
-                await self.completed_queue.put(processed_task)
+                # Only add to completed queue if there's a result (non-streaming tasks)
+                if processed_task:
+                    await self.completed_queue.put(processed_task)
         except Exception as e:
             task_data_with_error = task_data.copy()
             task_data_with_error["error"] = str(e)
@@ -175,20 +360,8 @@ class WorkerClient:
         self.tasks_available_event = asyncio.Event()
         self.ws_connected = asyncio.Event()
         
-        # Find the active model config
-        active_model = None
-        for model_config in self.model_configs:
-            if model_config.get("alias") == self.active_model_alias:
-                active_model = model_config
-                break
+        # No default model loading - worker starts without any loaded models
         
-        if active_model:
-            print(f"[Worker] Loading model: {active_model.get('alias')}")
-            await self.backend.load_model(active_model)
-            print(f"[Worker] Model loaded: {active_model.get('alias')}")
-        else:
-            print("[Worker] No active model specified or found in configs")
-
         await self.register_with_server()
         if not self.worker_uid:
             print("[Worker] Failed to register, exiting.")
@@ -232,13 +405,13 @@ class WorkerClient:
         """
         POST /worker/register to get a worker_uid from the server.
         """
-        backend_type = await self.backend.get_type()
-        print(backend_type)
+        # We now report all backend types that we support, not just one
+        supported_backend_types = ["TabbyAPI", "Ollama"] 
+        
         body = {
             "name": self.worker_name,
-            "backend_type": backend_type,
-            "supported_models": self.model_configs,
-            "active_model": self.active_model_alias
+            "backend_types": supported_backend_types,
+            "supported_models": self.model_configs
         }
         url = f"{self.server_base_url}/worker/register"
         async with httpx.AsyncClient() as client:
@@ -316,13 +489,17 @@ class WorkerClient:
 
     async def request_tasks(self, number: int) -> List[Dict[str, Any]]:
         """
-        Ask the server for up to 'number' tasks.
+        Ask the server for up to 'number' tasks, including hot/cold model information.
         """
+        hot_models, cold_models = self.classify_models()
+        
         request_id = str(uuid.uuid4())
         request = {
             "action": "request_tasks",
             "request_id": request_id,
-            "number": number
+            "number": number,
+            "hot_models": hot_models,
+            "cold_models": cold_models
         }
         try:
             response = await self.send_request(request)
@@ -441,7 +618,7 @@ class WorkerClient:
             "event": "done"
         })
 
-    async def process_one_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
+    async def process_one_task(self, task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Process a single task via the backend.
         """
@@ -452,13 +629,35 @@ class WorkerClient:
         stream = task.get("stream", False)
         max_tokens = task.get("max_tokens", 500)
         tools = task.get("tools", [])
-        
-        # Get generation params if provided
         params = task.get("params", PRECISE_PARAMS)
+        
+        # Load the model required for this task
+        backend_instance_id = await self.load_model_for_task(task)
+        if not backend_instance_id:
+            error_msg = f"Could not load model for task: {task_id}, model_alias: {task.get('model_alias', 'unknown')}"
+            print(f"[Worker] {error_msg}")
+            
+            if stream:
+                await self.send_stream_event(task_id, {
+                    "event": "error",
+                    "data": error_msg
+                })
+                await self.send_stream_event(task_id, {
+                    "event": "done"
+                })
+                return None
+            else:
+                task["error"] = error_msg
+                task["worker_name"] = self.worker_name
+                return task
+        
+        # Get the backend instance
+        backend_instance = self.loaded_backends[backend_instance_id]
+        backend = backend_instance.backend
         
         if stream:
             # Process streaming response
-            stream_iter = await self.backend.chat_completion(
+            stream_iter = await backend.chat_completion(
                 conversation, 
                 stream=True,
                 max_tokens=max_tokens,
@@ -471,7 +670,7 @@ class WorkerClient:
             return None
         else:
             # Process non-streaming response
-            response = await self.backend.chat_completion(
+            response = await backend.chat_completion(
                 conversation, 
                 stream=False,
                 max_tokens=max_tokens,
@@ -486,11 +685,11 @@ class WorkerClient:
         """Gracefully shut down the worker and unload models"""
         print("\n[Worker] Shutting down, unloading models...")
         try:
-            if hasattr(self, 'real_backend') and self.real_backend:
-                await self.real_backend.unload_model()
-                print("[Worker] Model successfully unloaded")
+            # Unload all active backends
+            for instance_id in list(self.loaded_backends.keys()):
+                await self.unload_backend(instance_id)
         except Exception as e:
-            print(f"[Worker] Error during model unload: {str(e)}")
+            print(f"[Worker] Error during shutdown: {str(e)}")
         
         # Cancel all running tasks
         for task in self.processing_tasks:

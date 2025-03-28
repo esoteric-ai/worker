@@ -109,6 +109,7 @@ class TabbyBackend(Backend):
 
             self.active_model = None
 
+            await self.stop()
         except Exception as e:
             raise RuntimeError(f"Failed to unload model: {str(e)}")
 

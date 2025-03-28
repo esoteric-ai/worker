@@ -32,6 +32,7 @@ class ModelConfig(TypedDict):
     alias: str = None
     backend: str = None
     quant: str = None
+    wrapper: str = None
     context_length: int = 8192
     
     api_name: str
