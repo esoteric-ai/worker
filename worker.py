@@ -844,10 +844,9 @@ def main():
     try:
         asyncio.run(run_with_graceful_shutdown(worker))
     except KeyboardInterrupt:
-        # This is a fallback in case the inner exception handler doesn't catch it
-        # When running with asyncio.run(), KeyboardInterrupt can be raised at the event loop level
+        
         print("\n[Worker] Keyboard interrupt received at event loop level, exiting...")
-        # No need for explicit shutdown here as the event loop is already stopping
+        asyncio.run( worker.shutdown())
 
 if __name__ == "__main__":
     main()
