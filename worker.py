@@ -64,6 +64,8 @@ class WorkerClient:
         # Track loaded models and backends
         self.loaded_backends: Dict[str, BackendInstance] = {}  # key: unique instance ID
         
+        # Add tracking for active tasks per model
+        self.model_active_tasks: Dict[str, int] = {}  # key: backend_instance_id, value: active task count
 
         self.worker_uid: Optional[str] = None
         self.websocket: Optional[websockets.WebSocketClientProtocol] = None
@@ -260,6 +262,9 @@ class WorkerClient:
                 await backend_instance.backend.unload_model()
             print(f"[Worker] Unloaded model: {backend_instance.model_alias}")
             del self.loaded_backends[instance_id]
+            # Remove from active tasks tracking
+            if instance_id in self.model_active_tasks:
+                del self.model_active_tasks[instance_id]
             return True
         except Exception as e:
             print(f"[Worker] Error unloading model {backend_instance.model_alias}: {str(e)}")
@@ -290,34 +295,91 @@ class WorkerClient:
                 finally:
                     self.tasks_available_event.clear()
 
+    async def get_suitable_model_for_task(self, task: Dict[str, Any]) -> Optional[str]:
+        """
+        Find a suitable model for the task that is already loaded.
+        Returns backend_instance_id if found, None otherwise.
+        """
+        model_aliases = task.get("models", [])
+        if not model_aliases:
+            legacy_alias = task.get("model_alias")
+            if legacy_alias:
+                model_aliases = [legacy_alias]
+            else:
+                return None
+
+        # Check if any model is already loaded
+        for model_alias in model_aliases:
+            for instance_id, backend_instance in self.loaded_backends.items():
+                if backend_instance.model_alias == model_alias:
+                    return instance_id
+                    
+        return None
+
     async def consumer_loop(self):
         """
-        Consumer that processes tasks concurrently up to batch_size limit.
+        Consumer that processes tasks respecting per-model parallel request limits.
         """
         while True:
             # Clean up completed tasks.
             self.processing_tasks = {t for t in self.processing_tasks if not t.done()}
 
-            # If we have room for more tasks, process them.
-            while len(self.processing_tasks) < self.batch_size:
+            # Check if we can process more tasks
+            if len(self.processing_tasks) < self.batch_size:
+                # Peek at the next task to determine which model it needs
                 try:
-                    task_data = self.task_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-
-                # Create and start the task. Attach the job name to the task.
-                task = asyncio.create_task(self.process_one_task_wrapper(task_data))
-                task.job_name = task_data.get("job_name")
-                self.processing_tasks.add(task)
-                self.task_queue.task_done()
-
-            await asyncio.sleep(0.1)
+                    # Look at the next task without removing it
+                    if not self.task_queue.empty():
+                        peek_task = self.task_queue._queue[0]  # Access internal queue to peek
+                        # Try to determine which model this task would use
+                        model_id = await self.get_suitable_model_for_task(peek_task)
+                        
+                        if model_id:
+                            # Check if the model has capacity for more tasks
+                            model_config = self.loaded_backends[model_id].model_config
+                            model_parallel_limit = model_config.get("performance_metrics", {}).get("parallel_requests", 1)
+                            current_model_tasks = self.model_active_tasks.get(model_id, 0)
+                            
+                            if current_model_tasks < model_parallel_limit:
+                                # We can process this task
+                                task_data = await self.task_queue.get()
+                                
+                                # Create and start the task
+                                task = asyncio.create_task(self.process_one_task_wrapper(task_data))
+                                task.job_name = task_data.get("job_name")
+                                self.processing_tasks.add(task)
+                                self.task_queue.task_done()
+                            else:
+                                # Model is at capacity, wait for tasks to complete
+                                await asyncio.sleep(0.1)
+                        else:
+                            # No suitable model found, remove the task
+                            task_data = await self.task_queue.get()
+                            task_data["error"] = "No suitable model found for this task"
+                            await self.completed_queue.put(task_data)
+                            self.task_queue.task_done()
+                except (IndexError, asyncio.QueueEmpty):
+                    # Queue is empty
+                    await asyncio.sleep(0.1)
+            else:
+                # We're at global batch limit
+                await asyncio.sleep(0.1)
 
     async def process_one_task_wrapper(self, task_data: Dict[str, Any]):
         """
         Wrapper to process a task and put it in the completed queue.
         """
+        # Get the model for this task before processing
+        backend_instance_id = None
+        
         try:
+            # Load model and get instance ID
+            backend_instance_id = await self.load_model_for_task(task_data)
+            
+            if backend_instance_id:
+                # Increment active task count for this model
+                self.model_active_tasks[backend_instance_id] = self.model_active_tasks.get(backend_instance_id, 0) + 1
+            
             # For streaming tasks, we don't put them in the completed queue 
             # as they are sent chunk by chunk
             if task_data.get("stream", False):
@@ -344,6 +406,10 @@ class WorkerClient:
                 await self.completed_queue.put(task_data_with_error)
             
             print(f"Error processing task: {e}")
+        finally:
+            # Decrement active task count for this model when done
+            if backend_instance_id:
+                self.model_active_tasks[backend_instance_id] = max(0, self.model_active_tasks.get(backend_instance_id, 1) - 1)
 
     async def submit_loop(self):
         """
