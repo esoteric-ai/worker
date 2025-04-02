@@ -552,7 +552,7 @@ class WorkerClient:
                 handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                 gpu_info.append({
                     "index": i,
-                    "name": pynvml.nvmlDeviceGetName(handle).decode('utf-8'),
+                    "name": pynvml.nvmlDeviceGetName(handle),
                     "memory_total_mb": pynvml.nvmlDeviceGetMemoryInfo(handle).total // (1024 * 1024)
                 })
             
@@ -864,7 +864,7 @@ class WorkerClient:
                 
                 gpu_metrics = {
                     "index": i,
-                    "name": pynvml.nvmlDeviceGetName(handle).decode('utf-8'),
+                    "name": pynvml.nvmlDeviceGetName(handle),
                     "util_percent": util.gpu,
                     "memory_used_mb": mem_info.used // (1024 * 1024),
                     "memory_total_mb": mem_info.total // (1024 * 1024),
