@@ -16,6 +16,8 @@ from backends.tabby import TabbyBackend, TabbyBackendConfig
 from backends.ollama import OllamaBackend, OllamaBackendConfig
 from wrappers.tekkenV7 import TekkenV7
 
+
+
 class BackendInstance:
     """Represents a loaded backend instance with its model"""
     def __init__(self, backend: Backend, model_config: Dict[str, Any], 
@@ -66,6 +68,9 @@ class WorkerClient:
         
         # Add tracking for active tasks per model
         self.model_active_tasks: Dict[str, int] = {}  # key: backend_instance_id, value: active task count
+
+        # Add counter for tasks processed since last metric send
+        self.tasks_processed_since_last_metric: int = 0
 
         self.worker_uid: Optional[str] = None
         self.websocket: Optional[websockets.WebSocketClientProtocol] = None
@@ -432,6 +437,8 @@ class WorkerClient:
                 processed_task = await self.process_one_task(task_data)
                 if processed_task:
                     await self.completed_queue.put(processed_task)
+            
+            self.tasks_processed_since_last_metric += 1
         except Exception as e:
             task_data_with_error = task_data.copy()
             task_data_with_error["error"] = str(e)
@@ -501,6 +508,7 @@ class WorkerClient:
         producer_task = asyncio.create_task(self.producer_loop())
         consumer_task = asyncio.create_task(self.consumer_loop())
         submit_task = asyncio.create_task(self.submit_loop())
+        metrics_task = asyncio.create_task(self.metrics_loop())
 
         reconnect_attempt = 0
         while True:
@@ -533,10 +541,30 @@ class WorkerClient:
         """
         supported_backend_types = ["TabbyAPI", "Ollama"] 
         
+        # Collect GPU information for registration
+        gpu_info = []
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            gpu_count = pynvml.nvmlDeviceGetCount()
+            
+            for i in range(gpu_count):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                gpu_info.append({
+                    "index": i,
+                    "name": pynvml.nvmlDeviceGetName(handle).decode('utf-8'),
+                    "memory_total_mb": pynvml.nvmlDeviceGetMemoryInfo(handle).total // (1024 * 1024)
+                })
+            
+            pynvml.nvmlShutdown()
+        except Exception as e:
+            print(f"[Worker] Failed to collect GPU info: {e}")
+        
         body = {
             "name": self.worker_name,
             "backend_types": supported_backend_types,
-            "supported_models": self.model_configs
+            "supported_models": self.model_configs,
+            "gpu_info": gpu_info
         }
         url = f"{self.server_base_url}/worker/register"
         async with httpx.AsyncClient() as client:
@@ -805,6 +833,75 @@ class WorkerClient:
             task["response"] = response
             task["worker_name"] = self.worker_name
             return task
+    
+    async def collect_metrics(self) -> Dict[str, Any]:
+        """
+        Collect system metrics (CPU, RAM, GPU usage) for monitoring.
+        """
+        import psutil
+        metrics = {
+            "cpu_percent": psutil.cpu_percent(interval=0.1),
+            "ram_percent": psutil.virtual_memory().percent,
+            "ram_used_mb": psutil.virtual_memory().used // (1024 * 1024),
+            "ram_total_mb": psutil.virtual_memory().total // (1024 * 1024),
+            "tasks_processed": self.tasks_processed_since_last_metric,
+            "gpus": []
+        }
+        
+        # Reset the counter after collection
+        self.tasks_processed_since_last_metric = 0
+        
+        try:
+            # Import here to avoid dependency issues if not available
+            import pynvml
+            pynvml.nvmlInit()
+            gpu_count = pynvml.nvmlDeviceGetCount()
+            
+            for i in range(gpu_count):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                
+                gpu_metrics = {
+                    "index": i,
+                    "name": pynvml.nvmlDeviceGetName(handle).decode('utf-8'),
+                    "util_percent": util.gpu,
+                    "memory_used_mb": mem_info.used // (1024 * 1024),
+                    "memory_total_mb": mem_info.total // (1024 * 1024),
+                    "memory_percent": (mem_info.used / mem_info.total) * 100
+                }
+                metrics["gpus"].append(gpu_metrics)
+                
+            pynvml.nvmlShutdown()
+        except Exception as e:
+            print(f"[Worker] Failed to collect GPU metrics: {e}")
+        
+        return metrics
+
+    async def metrics_loop(self):
+        """
+        Periodically collect and send system metrics to the server.
+        """
+        # Wait for worker_uid before sending metrics
+        while not self.worker_uid:
+            await asyncio.sleep(1)
+            
+        print("[Worker] Starting metrics collection loop")
+        while True:
+            try:
+                metrics = await self.collect_metrics()
+                
+                # Send metrics to the server
+                url = f"{self.server_base_url}/worker/metrics/{self.worker_uid}"
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(url, json=metrics)
+                    if response.status_code != 200:
+                        print(f"[Worker] Failed to send metrics: HTTP {response.status_code}")
+            except Exception as e:
+                print(f"[Worker] Error in metrics loop: {e}")
+            
+            # Sleep for 2 seconds before the next metrics collection
+            await asyncio.sleep(2)
     
     async def shutdown(self):
         """Gracefully shut down the worker and unload models"""
