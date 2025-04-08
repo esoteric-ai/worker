@@ -54,7 +54,7 @@ class VllmBackend(Backend):
             raise ValueError("run_path is required in load_options")
         
         try:
-            cmd = [run_path] + (run_arguments.split() if run_arguments else []) + [api_name]
+            cmd = [run_path] + (run_arguments.split() if run_arguments else [])
             print(cmd)
             kwargs = {'env': {**environment}} if environment else {'env': os.environ}
             
