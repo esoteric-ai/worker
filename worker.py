@@ -856,6 +856,7 @@ class WorkerClient:
                 params=params,
                 tools=tools
             )
+            print("in worker", response)
             task["response"] = response
             task["worker_name"] = self.worker_name
             return task
