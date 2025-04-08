@@ -56,7 +56,7 @@ class VllmBackend(Backend):
         try:
             cmd = [run_path] + (run_arguments.split() if run_arguments else []) + [api_name]
             
-            kwargs = {'env': {**os.environ, **environment}} if environment else {'env': os.environ}
+            kwargs = {'env': {**environment}} if environment else {'env': os.environ}
             
             # On Unix systems, create a new process group
             if sys.platform != "win32":
