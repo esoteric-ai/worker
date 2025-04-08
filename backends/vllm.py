@@ -178,10 +178,11 @@ class VllmBackend(Backend):
             "frequency_penalty": params.get("frequency_penalty", 0.0),
             "presence_penalty": params.get("presence_penalty", 0.0),
         }
-
+        print("vllm url\n", self.config.get("base_url"))
         try:
             if stream:
                 async def response_generator():
+                    print("vllm is streaming\n", request_body, extra_body)
                     stream_response = await self.openai_client.chat.completions.create(
                         **request_body,
                         extra_body=extra_body,
