@@ -15,6 +15,8 @@ from backends.generation_params import PRECISE_PARAMS
 from backends.tabby import TabbyBackend, TabbyBackendConfig
 from backends.ollama import OllamaBackend, OllamaBackendConfig
 from backends.gigachat import GigaChatBackend, GigaChatBackendConfig
+from backends.vllm import VllmBackend, VllmBackendConfig 
+
 from wrappers.tekkenV7 import TekkenV7
 
 
@@ -64,6 +66,10 @@ class WorkerClient:
             ),
             "Gigachat": GigaChatBackendConfig(
                 api_key=cfg.get("gigachat_api_key")
+            ),
+            "vLLM": VllmBackendConfig(
+                base_url=cfg.get("vllm_api_url", "http://127.0.0.1"),
+                api_key=cfg.get("vllm_api_key")
             )
         }
         
@@ -115,6 +121,14 @@ class WorkerClient:
             if wrapper_name == "TekkenV7":
                 backend = TekkenV7(real_backend)
                 print("Warning: TekkenV7 shouldn't be used with online providers like Gigachat.")
+            else:
+                backend = real_backend
+                real_backend = None
+        elif backend_type == "vLLM":
+            real_backend = VllmBackend(self.backend_configs["vLLM"])
+            if wrapper_name == "TekkenV7":
+                backend = TekkenV7(real_backend)
+                print("Warning: It is recommended to use vLLM's built-in support of mistal-common tokenization for advances multimodal support.")
             else:
                 backend = real_backend
                 real_backend = None
@@ -551,7 +565,7 @@ class WorkerClient:
         """
         POST /worker/register to get a worker_uid from the server.
         """
-        supported_backend_types = ["TabbyAPI", "Ollama", "Gigachat"] 
+        supported_backend_types = ["TabbyAPI", "Ollama", "Gigachat", "vLLM"] 
         
         # Collect GPU information for registration
         gpu_info = []

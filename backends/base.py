@@ -21,7 +21,10 @@ console = Console()
 class ModelLoadConfig(TypedDict):
     num_gpu_layers: int = 0
     gpu_split: List[int] = [1]
-
+    run_path: Optional[str] = None
+    run_arguments: Optional[str] = None
+    environment: Optional[Dict[str, str]] = None
+    
 class ModelPerformanceMetrics(TypedDict):
     parallel_requests: int = 1
     ram_requirement: int = 8000
