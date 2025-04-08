@@ -94,8 +94,6 @@ class TekkenV7:
 
         messages = []
         for msg in conversation:
-            print(msg)
-            
             if msg["role"] == "system":
                 messages.append(SystemMessage(content=msg["content"]))
             elif msg["role"] == "user":
@@ -130,12 +128,10 @@ class TekkenV7:
                         ))
                     
                 else:
-                    print("MSG1")
                     if msg.get("content", "") != "":
                         messages.append(AssistantMessage(content=msg.get("content")))
                     else:
                         messages.append(AssistantMessage(content="<System message: Assistant was calling tools here. Tool call was removed to save context.>"))
-                    print("MSG1")
             elif msg["role"] == "tool":
                 # Handle tool messages with tool_call_id
                 tool_call_id = msg.get("tool_call_id", f"{uuid.uuid4().hex[:9]}")
@@ -184,7 +180,7 @@ class TekkenV7:
         # Get the completion text and check finish reason
         completion_text = self._replace_special_chars(response['choices'][0]['text'])
         finish_reason = response['choices'][0]['finish_reason']
-        print("compl text", completion_text)
+        
         # If finish reason is length, return text without trying to parse tool calls
         if finish_reason == "length":
             return {
@@ -389,7 +385,6 @@ class TekkenV7:
         return await self.backend.benchmark_model(model)
     
     async def get_type(self) -> Literal["Managed", "Instant"]:
-        print("Returning backend type passthrough")
         return await self.backend.get_type()
 
     async def load_model(self, model: ModelConfig) -> None:

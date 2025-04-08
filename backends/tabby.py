@@ -39,7 +39,6 @@ class TabbyBackend(Backend):
         return self.pid
 
     async def get_type(self) -> Literal["Managed", "Instant"]:
-        print("Returning backend type: Managed")
         return "Managed"
     
     
@@ -329,7 +328,7 @@ class TabbyBackend(Backend):
                 return response
             else:
                 # Process the response and return the string
-                print(response.model_dump())
+                
                 return response.model_dump()
 
         except Exception as e:
