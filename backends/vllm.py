@@ -37,6 +37,20 @@ class VllmBackend(Backend):
         print("Returning backend type: Managed")
         return "Managed"
     
+    async def _read_and_print_output(self, stream, startup_event):
+        """Read from stream and print to console, watching for startup completion."""
+        while True:
+            line = await asyncio.get_event_loop().run_in_executor(None, stream.readline)
+            if not line:
+                break
+                
+            line_str = line.decode('utf-8', errors='replace').rstrip()
+            print(f"[VLLM] {line_str}")
+            
+            # Check for startup complete message
+            if "Application startup complete." in line_str and not startup_event.is_set():
+                startup_event.set()
+    
     async def load_model(self, model: ModelConfig) -> None:
         if self.running:
             await self.unload_model()
@@ -65,18 +79,27 @@ class VllmBackend(Backend):
             
             self.process = subprocess.Popen(
                 cmd,
-                
-                # stdout=subprocess.PIPE, 
-                # stderr=subprocess.PIPE,
-                
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
                 **kwargs
             )
             
             print(f"[VllmBackend] Started VLLM process with PID {self.process.pid}")
             
-            # Wait 30 seconds for the model to load
-            print(f"[VllmBackend] Waiting 30 seconds for model {api_name} to load...")
-            await asyncio.sleep(30)
+            # Create an event to signal when startup is complete
+            startup_complete = asyncio.Event()
+            
+            # Start tasks to read and print stdout/stderr
+            stdout_task = asyncio.create_task(self._read_and_print_output(self.process.stdout, startup_complete))
+            stderr_task = asyncio.create_task(self._read_and_print_output(self.process.stderr, startup_complete))
+            
+            # Wait for startup to complete or timeout after 120 seconds
+            print(f"[VllmBackend] Waiting for model {api_name} to initialize...")
+            try:
+                await asyncio.wait_for(startup_complete.wait(), 120)
+                print(f"[VllmBackend] Model startup complete detected")
+            except asyncio.TimeoutError:
+                print(f"[VllmBackend] Model startup timeout - continuing anyway")
             
             if self.process.poll() is not None:
                 raise RuntimeError(f"Failed to start VLLM process")
