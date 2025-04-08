@@ -266,7 +266,7 @@ class TabbyBackend(Backend):
                     **request_body,
                     extra_body=extra_body,
                 )
-
+                print("Returning response:", response.model_dump())
                 return response.model_dump()
             
         except Exception as e:
