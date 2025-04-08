@@ -223,6 +223,7 @@ class TabbyBackend(Backend):
             "model": self.active_model.get("api_name"),
             "messages": conversation,
             "stream": stream,
+            "tools": tools
         }
 
         extra_body = {
