@@ -249,6 +249,7 @@ class TabbyBackend(Backend):
         }
 
         try:
+            print(stream)
             if stream:
                 # Return an async generator that yields chunks
                 async def response_generator():
@@ -262,6 +263,7 @@ class TabbyBackend(Backend):
 
                 return response_generator()
             else:
+                print("start")
                 response = await self.openai_client.chat.completions.create(
                     **request_body,
                     extra_body=extra_body,
