@@ -14,6 +14,7 @@ from backends.base import Backend, ModelConfig, ModelLoadConfig, ModelPerformanc
 from backends.generation_params import PRECISE_PARAMS
 from backends.tabby import TabbyBackend, TabbyBackendConfig
 from backends.ollama import OllamaBackend, OllamaBackendConfig
+from backends.gigachat import GigaChatBackend, GigaChatBackendConfig
 from wrappers.tekkenV7 import TekkenV7
 
 
@@ -60,6 +61,9 @@ class WorkerClient:
                 run_path=cfg.get("ollama_run_path"),
                 run_arguments=cfg.get("ollama_run_arguments"),
                 environment=cfg.get("ollama_environment")
+            ),
+            "Gigachat": GigaChatBackendConfig(
+                api_key=cfg.get("gigachat_api_key")
             )
         }
         
@@ -103,6 +107,14 @@ class WorkerClient:
             real_backend = OllamaBackend(self.backend_configs["Ollama"])
             if wrapper_name == "TekkenV7":
                 backend = TekkenV7(real_backend)
+            else:
+                backend = real_backend
+                real_backend = None
+        elif backend_type == "Gigachat":
+            real_backend = GigaChatBackend(self.backend_configs["Gigachat"])
+            if wrapper_name == "TekkenV7":
+                backend = TekkenV7(real_backend)
+                print("Warning: TekkenV7 shouldn't be used with online providers like Gigachat.")
             else:
                 backend = real_backend
                 real_backend = None
@@ -539,7 +551,7 @@ class WorkerClient:
         """
         POST /worker/register to get a worker_uid from the server.
         """
-        supported_backend_types = ["TabbyAPI", "Ollama"] 
+        supported_backend_types = ["TabbyAPI", "Ollama", "Gigachat"] 
         
         # Collect GPU information for registration
         gpu_info = []
