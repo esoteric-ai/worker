@@ -184,7 +184,7 @@ class TekkenV7:
         # Get the completion text and check finish reason
         completion_text = self._replace_special_chars(response['choices'][0]['text'])
         finish_reason = response['choices'][0]['finish_reason']
-
+        print("compl text", completion_text)
         # If finish reason is length, return text without trying to parse tool calls
         if finish_reason == "length":
             return {
