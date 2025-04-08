@@ -809,7 +809,7 @@ class WorkerClient:
         max_tokens = task.get("max_tokens", 500)
         tools = task.get("tools", [])
         params = task.get("params", PRECISE_PARAMS)
-        print(task)
+        
         # Load the model required for this task
         backend_instance_id = await self.load_model_for_task(task)
         if not backend_instance_id:
