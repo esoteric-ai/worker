@@ -137,8 +137,8 @@ class TabbyBackend(Backend):
             
             self.process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
+                # stdout=subprocess.PIPE, 
+                # stderr=subprocess.PIPE,
                 # shell=True,
                 # text=True
                 **kwargs
