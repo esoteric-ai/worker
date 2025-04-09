@@ -395,6 +395,8 @@ class WorkerClient:
             if old_task_count != len(self.processing_tasks):
                 print(f"[Consumer] Cleaned up tasks. Before: {old_task_count}, After: {len(self.processing_tasks)}")
 
+            print("Hello.")
+            
             # Check if we can process more tasks
             if self.task_queue.empty():
                 await asyncio.sleep(0.1)
