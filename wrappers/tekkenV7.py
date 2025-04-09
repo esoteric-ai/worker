@@ -89,7 +89,7 @@ class TekkenV7:
             # No tool calls, just content
             return text.strip() if text.strip() else None, []
     
-    async def chat_completion(self, conversation: List[Dict[str, Any]], stream: bool = False, tools = [], max_tokens: int = 500, params: GenerationParams = PRECISE_PARAMS) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
+    async def chat_completion(self, conversation: List[Dict[str, Any]], stream: bool = False, tools = [], max_tokens: int = 500, params: GenerationParams = PRECISE_PARAMS, mm_processor_kwargs={}) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
         tokenizer = MistralTokenizer.v7()
 
         messages = []
