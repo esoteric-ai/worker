@@ -210,7 +210,7 @@ class VllmBackend(Backend):
         if mm_processor_kwargs:
             extra_body["mm_processor_kwargs"] = mm_processor_kwargs
         
-        print("CHAT COMPLETION INCOMING.")
+        print(request_body, extra_body)
         
         try:
             if stream:
