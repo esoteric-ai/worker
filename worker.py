@@ -236,9 +236,9 @@ class WorkerClient:
 
         # Get VRAM requirements for this model
         vram_requirements = model_config.get("performance_metrics", {}).get("vram_requirement", [])
-        backend_type = model_config.get("backend_type")
+        backend = model_config.get("backend")
 
-        if not backend_type:
+        if not backend:
             print(f"[Worker] No backend type specified for model {preferred_model_alias}")
             return None
 
