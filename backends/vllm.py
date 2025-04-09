@@ -207,7 +207,7 @@ class VllmBackend(Backend):
             "presence_penalty": params.get("presence_penalty", 0.0)
         }
         
-        if len(mm_processor_kwargs) != 0:
+        if mm_processor_kwargs and any(mm_processor_kwargs.values()):
             print("mm_orice", mm_processor_kwargs)
             extra_body["mm_processor_kwargs"] = mm_processor_kwargs
         
