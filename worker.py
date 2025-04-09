@@ -31,10 +31,18 @@ class BackendInstance:
         self.wrapper_name = wrapper_name
         self.gpu_allocation = model_config.get("performance_metrics", {}).get("vram_requirement", [])
         self.loaded_on_gpus = [i for i, vram in enumerate(self.gpu_allocation) if vram > 0]
+        # Add parallel_requests from model config or default to 1
+        self.parallel_requests = model_config.get("performance_metrics", {}).get("parallel_requests", 1)
+        # Track current requests using this model
+        self.active_requests = 0
 
     @property
     def model_alias(self) -> str:
         return self.model_config.get("alias", "unknown")
+
+    def has_capacity(self) -> bool:
+        """Check if this model instance has capacity for another request"""
+        return self.active_requests < self.parallel_requests
 
 
 
@@ -403,9 +411,19 @@ class WorkerClient:
             if old_task_count != len(self.processing_tasks):
                 print(f"[Consumer] Cleaned up tasks. Before: {old_task_count}, After: {len(self.processing_tasks)}")
 
-            # print("Hello.")
-            # print("HELLo")
-            # Check if we can process more tasks
+            # Update active request counts for each backend instance
+            for instance_id, instance in self.loaded_backends.items():
+                instance.active_requests = 0
+                
+            # Count active tasks per model
+            for task in self.processing_tasks:
+                if hasattr(task, 'task_data'):
+                    task_models = task.task_data.get("models", [])
+                    for model_alias in task_models:
+                        for instance_id, instance in self.loaded_backends.items():
+                            if instance.model_alias == model_alias:
+                                instance.active_requests += 1
+            
             await asyncio.sleep(0.1)
             
             if self.task_queue.empty():
@@ -433,6 +451,23 @@ class WorkerClient:
                     
                     # Check if any required model is locked
                     if any(alias in self.model_locks for alias in model_aliases):
+                        deferred_tasks.append(task_data)
+                        self.task_queue.task_done()
+                        continue
+                    
+                    # Check if any required model is at capacity for parallel requests
+                    model_at_capacity = False
+                    for alias in model_aliases:
+                        for instance_id, instance in self.loaded_backends.items():
+                            if instance.model_alias == alias:
+                                if not instance.has_capacity():
+                                    model_at_capacity = True
+                                    print(f"[Consumer] Task {task_id}: Model {alias} at max capacity ({instance.active_requests}/{instance.parallel_requests}). Deferring task.")
+                                    break
+                        if model_at_capacity:
+                            break
+                            
+                    if model_at_capacity:
                         deferred_tasks.append(task_data)
                         self.task_queue.task_done()
                         continue
