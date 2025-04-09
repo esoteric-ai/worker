@@ -459,31 +459,31 @@ class WorkerClient:
                     
                     # Check if the GPUs required by the task's first model are already in use
                     gpu_conflict = False
-                    print(f"[Consumer] Task {task_id}: Checking for GPU conflicts")
+                    # print(f"[Consumer] Task {task_id}: Checking for GPU conflicts")
 
                     # Get the first preferred model's configuration
                     preferred_model = model_aliases[0] if model_aliases else None
                     model_config = None
                     
                     if preferred_model:
-                        print(f"[Consumer] Task {task_id}: Finding configuration for model {preferred_model}")
+                        # print(f"[Consumer] Task {task_id}: Finding configuration for model {preferred_model}")
                         for config in self.model_configs:
                             if config.get("alias") == preferred_model:
                                 model_config = config
-                                print(f"[Consumer] Task {task_id}: Found config for model {preferred_model}")
+                                # print(f"[Consumer] Task {task_id}: Found config for model {preferred_model}")
                                 break
                             
                     if model_config:
                         # Get the GPUs this model would need
                         required_gpus = []
                         vram_requirements = model_config.get("performance_metrics", {}).get("vram_requirement", [])
-                        print(f"[Consumer] Task {task_id}: Model {preferred_model} VRAM requirements: {vram_requirements}")
+                        # print(f"[Consumer] Task {task_id}: Model {preferred_model} VRAM requirements: {vram_requirements}")
 
                         for gpu_idx, vram_needed in enumerate(vram_requirements):
                             if vram_needed > 0:
                                 required_gpus.append(gpu_idx)
                         
-                        print(f"[Consumer] Task {task_id}: Model {preferred_model} requires GPUs: {required_gpus}")
+                        # print(f"[Consumer] Task {task_id}: Model {preferred_model} requires GPUs: {required_gpus}")
 
                         # Check if any of the required GPUs are in use by other processing tasks
                         for task in self.processing_tasks:
@@ -491,16 +491,16 @@ class WorkerClient:
                                 task_models = task.task_data.get("models", [])
 
                                 if task_models:
-                                    print(f"[Consumer] Task {task_id}: Checking conflict with task using models {task_models}")
+                                    # print(f"[Consumer] Task {task_id}: Checking conflict with task using models {task_models}")
                                     # Find which backend is handling this task
                                     for backend_id, backend in self.loaded_backends.items():
                                         if backend.model_alias in task_models:
                                             # Check if this model uses any of the same GPUs
-                                            print(f"[Consumer] Task {task_id}: Found task using model {backend.model_alias} on GPUs {backend.loaded_on_gpus}")
+                                            # print(f"[Consumer] Task {task_id}: Found task using model {backend.model_alias} on GPUs {backend.loaded_on_gpus}")
                                             for gpu_idx in required_gpus:
                                                 if gpu_idx in backend.loaded_on_gpus:
                                                     gpu_conflict = True
-                                                    print(f"[Consumer] Task {task_id}: GPU conflict detected on GPU {gpu_idx}")
+                                                    # print(f"[Consumer] Task {task_id}: GPU conflict detected on GPU {gpu_idx}")
                                                     break
                                                 
                                             if gpu_conflict:
