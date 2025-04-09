@@ -561,25 +561,26 @@ class WorkerClient:
                             loading_task = asyncio.create_task(self.load_model_for_task({"models": [preferred_model]}))
                             
                             
-                            
-                            # Set up callback to clean up when loading is complete
-                            def on_model_loaded(task):
-                                try:
-                                    # Get the instance_id from the completed task
-                                    result = task.result()
-                                    print(f"[Consumer] Model {preferred_model} loaded with instance_id: {result}")
-                                except Exception as e:
-                                    print(f"[Consumer] Error loading model {preferred_model}: {e}")
-                                finally:
-                                    self.model_locks.discard(preferred_model)
-                                    print(f"[Consumer] Removed lock for model {preferred_model}")
+                            # Create a closure to capture the current values
+                            def create_model_loaded_callback(model_name, gpu_indices):
+                                def on_model_loaded(task):
+                                    try:
+                                        # Get the instance_id from the completed task
+                                        result = task.result()
+                                        print(f"[Consumer] Model {model_name} loaded with instance_id: {result}")
+                                    except Exception as e:
+                                        print(f"[Consumer] Error loading model {model_name}: {e}")
+                                    finally:
+                                        self.model_locks.discard(model_name)
+                                        print(f"[Consumer] Removed lock for model {model_name}")
+                                        
+                                        # Also remove GPU locks
+                                        for gpu_idx in gpu_indices:
+                                            self.gpu_locks.discard(gpu_idx)
+                                            print(f"[Consumer] Removed lock for GPU {gpu_idx}")
+                                return on_model_loaded
                                     
-                                    # Also remove GPU locks
-                                    for gpu_idx in required_gpus:
-                                        self.gpu_locks.discard(gpu_idx)
-                                        print(f"[Consumer] Removed lock for GPU {gpu_idx}")
-                                    
-                            loading_task.add_done_callback(on_model_loaded)
+                            loading_task.add_done_callback(create_model_loaded_callback(preferred_model, required_gpus.copy()))
 
                             # Put the task back in
                             deferred_tasks.append(task_data)
