@@ -398,8 +398,10 @@ class WorkerClient:
             # print("Hello.")
             
             # Check if we can process more tasks
+            await asyncio.sleep(0.1)
+            
             if self.task_queue.empty():
-                await asyncio.sleep(0.1)
+                
                 continue
 
             # Process model groups, prioritizing models that are already loaded
