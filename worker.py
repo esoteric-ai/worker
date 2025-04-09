@@ -298,7 +298,7 @@ class WorkerClient:
             instance_id = str(uuid.uuid4())
 
             # Create the backend instance
-            backend_instance = self._create_backend_instance(backend_type, model_config)
+            backend_instance = self._create_backend_instance(backend, model_config)
 
             # Load the model
             load_config = ModelLoadConfig(
