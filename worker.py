@@ -211,13 +211,6 @@ class WorkerClient:
             print("[Worker] No models specified for task")
             return None
 
-        # First check if any model in the list is already loaded
-        for model_alias in model_aliases:
-            for instance_id, backend_instance in self.loaded_backends.items():
-                if backend_instance.model_alias == model_alias:
-                    print(f"[Worker] Using already loaded model: {model_alias}")
-
-                    return instance_id
 
         # None of the requested models are loaded, try to load the first one
         preferred_model_alias = model_aliases[0]
@@ -304,6 +297,16 @@ class WorkerClient:
                 await backend_instance.real_backend.load_model(model_config)
             else:
                 await backend_instance.backend.load_model(model_config)
+
+            placeholder_ids = []
+            for temp_id, temp_instance in self.loaded_backends.items():
+                if (temp_id.startswith(f"loading_{preferred_model_alias}_") and 
+                    temp_instance.wrapper_name == "loading_placeholder"):
+                    placeholder_ids.append(temp_id)
+                    
+            for temp_id in placeholder_ids:
+                print(f"[Worker] Removing temporary placeholder for model {preferred_model_alias}")
+                del self.loaded_backends[temp_id]
 
             # Store the loaded backend
             self.loaded_backends[instance_id] = backend_instance
@@ -429,9 +432,6 @@ class WorkerClient:
                     
                     # Check if any required model is locked
                     if any(alias in self.model_locks for alias in model_aliases):
-                        # Model is locked (loading/unloading in progress), put task back in queue
-                        locked_models = [alias for alias in model_aliases if alias in self.model_locks]
-                        
                         deferred_tasks.append(task_data)
                         self.task_queue.task_done()
                         continue
@@ -518,6 +518,28 @@ class WorkerClient:
                         preferred_model = model_aliases[0] if model_aliases else None
                         if preferred_model:
                             print(f"[Consumer] Task {task_id}: Initiating model loading for {preferred_model}")
+                            
+                            model_config = None
+                            for config in self.model_configs:
+                                if config.get("alias") == preferred_model:
+                                    model_config = config
+                                    break
+                                    
+                            # Create temporary placeholder backend to reserve GPU resources
+                            if model_config:
+                                temp_instance_id = f"loading_{preferred_model}_{str(uuid.uuid4())}"
+                                # Create a minimal placeholder backend instance that just reserves the GPU
+                                temp_backend = type('DummyBackend', (), {'load_model': lambda x: None, 'unload_model': lambda: None})()
+                                temp_instance = BackendInstance(
+                                    backend=temp_backend,
+                                    real_backend=None,
+                                    model_config=model_config,
+                                    wrapper_name="loading_placeholder"
+                                )
+                                # Add to loaded_backends to reserve the GPU allocation
+                                self.loaded_backends[temp_instance_id] = temp_instance
+                                print(f"[Consumer] Task {task_id}: Created temporary GPU reservation for {preferred_model}")
+                            
                             loading_task = asyncio.create_task(self.load_model_for_task({"models": [preferred_model]}))
                             
                             self.model_locks.add(preferred_model)
