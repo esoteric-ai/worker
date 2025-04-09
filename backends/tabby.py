@@ -208,7 +208,7 @@ class TabbyBackend(Backend):
         stream: bool = False, 
         tools = [],
         max_tokens: int = 500, 
-        params: GenerationParams = PRECISE_PARAMS
+        params: GenerationParams = PRECISE_PARAMS, mm_processor_kwargs={}
     ) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
         """
         Use the shared OpenAI client for chat completions with generation parameters.

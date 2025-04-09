@@ -181,7 +181,7 @@ class VllmBackend(Backend):
         stream: bool = False, 
         tools = [],
         max_tokens: int = 500, 
-        params: GenerationParams = PRECISE_PARAMS
+        params: GenerationParams = PRECISE_PARAMS, mm_processor_kwargs={}
     ) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
         """
         Use the shared OpenAI client for chat completions with generation parameters.
@@ -205,6 +205,7 @@ class VllmBackend(Backend):
             "repetition_penalty": params.get("repetition_penalty", 1.0),
             "frequency_penalty": params.get("frequency_penalty", 0.0),
             "presence_penalty": params.get("presence_penalty", 0.0),
+            "mm_processor_kwargs": mm_processor_kwargs
         }
         try:
             if stream:

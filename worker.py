@@ -809,6 +809,7 @@ class WorkerClient:
         max_tokens = task.get("max_tokens", 500)
         tools = task.get("tools", [])
         params = task.get("params", PRECISE_PARAMS)
+        mm_processor_kwargs = task.get("mm_processor_kwargs", {})
         
         # Load the model required for this task
         backend_instance_id = await self.load_model_for_task(task)
@@ -841,7 +842,8 @@ class WorkerClient:
                 stream=True,
                 max_tokens=max_tokens,
                 params=params,
-                tools=tools
+                tools=tools,
+                mm_processor_kwargs=mm_processor_kwargs
             )
             # Handle streaming response in a separate method
             await self.process_streamed_response(task_id, stream_iter)
@@ -854,7 +856,8 @@ class WorkerClient:
                 stream=False,
                 max_tokens=max_tokens,
                 params=params,
-                tools=tools
+                tools=tools,
+                mm_processor_kwargs=mm_processor_kwargs
             )
             task["response"] = response
             task["worker_name"] = self.worker_name
