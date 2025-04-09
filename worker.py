@@ -395,13 +395,17 @@ class WorkerClient:
         """
         Consumer that processes tasks by batching them by model for efficiency.
         """
+        print("[Consumer] Starting consumer loop")
         while True:
             # Clean up completed tasks
+            old_task_count = len(self.processing_tasks)
             self.processing_tasks = {t for t in self.processing_tasks if not t.done()}
+            if old_task_count != len(self.processing_tasks):
+                print(f"[Consumer] Cleaned up tasks. Before: {old_task_count}, After: {len(self.processing_tasks)}")
 
             # Check if we can process more tasks
-            #if len(self.processing_tasks) < self.batch_size:
             if self.task_queue.empty():
+                print("[Consumer] Task queue empty, waiting...")
                 await asyncio.sleep(0.1)
                 continue
 
@@ -409,21 +413,30 @@ class WorkerClient:
             already_loaded_models = set()
             for instance_id, backend_instance in self.loaded_backends.items():
                 already_loaded_models.add(backend_instance.model_alias)
-
+            
+            print(f"[Consumer] Currently loaded models: {already_loaded_models}")
 
             while not self.task_queue.empty():
+                print(f"[Consumer] Processing task from queue. Queue size: {self.task_queue.qsize()}")
                 task_data = await self.task_queue.get()
-
-
+                
                 model_aliases = task_data.get("models", [])
+                task_id = task_data.get("id", "unknown")
+                print(f"[Consumer] Task {task_id} requests models: {model_aliases}")
+
                 if any(alias in already_loaded_models for alias in model_aliases):
+                    print(f"[Consumer] Task {task_id}: Found requested model(s) already loaded")
+                    
                     # Check if any required model is locked
                     if any(alias in self.model_locks for alias in model_aliases):
                         # Model is locked (loading/unloading in progress), put task back in queue
+                        locked_models = [alias for alias in model_aliases if alias in self.model_locks]
+                        print(f"[Consumer] Task {task_id}: Models {locked_models} are locked. Deferring task.")
                         await self.task_queue.put(task_data)
                         self.task_queue.task_done()
                         continue
-                        
+                    
+                    print(f"[Consumer] Task {task_id}: Creating processing task")
                     task = asyncio.create_task(
                         self.process_one_task_wrapper(task_data)
                     )
@@ -431,53 +444,63 @@ class WorkerClient:
                     task.task_data = task_data
                     self.processing_tasks.add(task)
                     
+                    print(f"[Consumer] Task {task_id} added to processing_tasks. Total processing: {len(self.processing_tasks)}")
                     self.task_queue.task_done()
 
-                    # model_parallel_limit = self.loaded_backends[instance_id].model_config.get("performance_metrics", {}).get("parallel_requests", 1)
                 else:
+                    print(f"[Consumer] Task {task_id}: No requested models currently loaded")
                     # Check if the preferred model is locked
                     if model_aliases and model_aliases[0] in self.model_locks:
                         # Preferred model is locked, put task back in queue
+                        print(f"[Consumer] Task {task_id}: Preferred model {model_aliases[0]} is locked. Deferring task.")
                         await self.task_queue.put(task_data)
                         self.task_queue.task_done()
                         continue
                     
                     # Check if the GPUs required by the task's first model are already in use
                     gpu_conflict = False
+                    print(f"[Consumer] Task {task_id}: Checking for GPU conflicts")
 
                     # Get the first preferred model's configuration
-                    preferred_model = model_aliases[0]
+                    preferred_model = model_aliases[0] if model_aliases else None
                     model_config = None
                     
                     if preferred_model:
+                        print(f"[Consumer] Task {task_id}: Finding configuration for model {preferred_model}")
                         for config in self.model_configs:
                             if config.get("alias") == preferred_model:
                                 model_config = config
+                                print(f"[Consumer] Task {task_id}: Found config for model {preferred_model}")
                                 break
                             
                     if model_config:
-                    # Get the GPUs this model would need
+                        # Get the GPUs this model would need
                         required_gpus = []
                         vram_requirements = model_config.get("performance_metrics", {}).get("vram_requirement", [])
+                        print(f"[Consumer] Task {task_id}: Model {preferred_model} VRAM requirements: {vram_requirements}")
 
                         for gpu_idx, vram_needed in enumerate(vram_requirements):
                             if vram_needed > 0:
                                 required_gpus.append(gpu_idx)
+                        
+                        print(f"[Consumer] Task {task_id}: Model {preferred_model} requires GPUs: {required_gpus}")
 
                         # Check if any of the required GPUs are in use by other processing tasks
                         for task in self.processing_tasks:
                             if hasattr(task, 'task_data'):
-                                task_model_alias = None
                                 task_models = task.task_data.get("models", [])
 
                                 if task_models:
+                                    print(f"[Consumer] Task {task_id}: Checking conflict with task using models {task_models}")
                                     # Find which backend is handling this task
                                     for backend_id, backend in self.loaded_backends.items():
                                         if backend.model_alias in task_models:
                                             # Check if this model uses any of the same GPUs
+                                            print(f"[Consumer] Task {task_id}: Found task using model {backend.model_alias} on GPUs {backend.loaded_on_gpus}")
                                             for gpu_idx in required_gpus:
                                                 if gpu_idx in backend.loaded_on_gpus:
                                                     gpu_conflict = True
+                                                    print(f"[Consumer] Task {task_id}: GPU conflict detected on GPU {gpu_idx}")
                                                     break
                                                 
                                             if gpu_conflict:
@@ -488,34 +511,33 @@ class WorkerClient:
                                 
                     if gpu_conflict:
                         # GPUs needed by this task are in use, put it back in queue
+                        print(f"[Consumer] Task {task_id}: GPU conflict detected. Deferring task.")
                         await self.task_queue.put(task_data)
                         self.task_queue.task_done()
                     else:
-                        preferred_model = model_aliases[0]
-                        
+                        preferred_model = model_aliases[0] if model_aliases else None
+                        if preferred_model:
+                            print(f"[Consumer] Task {task_id}: Initiating model loading for {preferred_model}")
+                            loading_task = asyncio.create_task(self.load_model_for_task({"models": [preferred_model]}))
+                            
+                            self.model_locks.add(preferred_model)
+                            print(f"[Consumer] Task {task_id}: Added lock for model {preferred_model}")
+                            
+                            # Set up callback to clean up when loading is complete
+                            def on_model_loaded(task):
+                                try:
+                                    # Get the instance_id from the completed task
+                                    result = task.result()
+                                    print(f"[Consumer] Model {preferred_model} loaded with instance_id: {result}")
+                                except Exception as e:
+                                    print(f"[Consumer] Error loading model {preferred_model}: {e}")
+                                finally:
+                                    self.model_locks.discard(preferred_model)
+                                    print(f"[Consumer] Removed lock for model {preferred_model}")
+                                    
+                            loading_task.add_done_callback(on_model_loaded)
 
-                        loading_task = asyncio.create_task(self.load_model_for_task({"models": [preferred_model]}))
-                        
-                        self.model_locks.add(preferred_model)
-                        
-                        
-                        # Set up callback to clean up when loading is complete
-                        def on_model_loaded(task):
-                            try:
-                                # Get the instance_id from the completed task
-                                result = task.result()
-                                print(f"[Worker] Model {preferred_model} loaded with instance_id: {result}")
-                            except Exception as e:
-                                print(f"[Worker] Error loading model {preferred_model}: {e}")
-                            finally:
-                                
-                                self.model_locks.discard(preferred_model)
-                        loading_task.add_done_callback(on_model_loaded)
-
-                        # Put the task back in queue to be processed later when model is available
-                        await self.task_queue.put(task_data)
-                        self.task_queue.task_done()
-
+                            # Put the task back in
 
 
     async def process_one_task_wrapper(self, task_data: Dict[str, Any]):
