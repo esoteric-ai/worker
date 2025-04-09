@@ -48,6 +48,8 @@ class WorkerClient:
         
         self.model_configs: List[ModelConfig] = cfg.get("model_configs", [])
         
+        self.model_locks = set()
+        
          # Backend configurations
         self.backend_configs = {
             "TabbyAPI": TabbyBackendConfig(
@@ -76,9 +78,6 @@ class WorkerClient:
         # Track loaded models and backends
         self.loaded_backends: Dict[str, BackendInstance] = {}  # key: unique instance ID
         
-        # Add tracking for active tasks per model
-        self.model_active_tasks: Dict[str, int] = {}  # key: backend_instance_id, value: active task count
-
         # Add counter for tasks processed since last metric send
         self.tasks_processed_since_last_metric: int = 0
 
@@ -108,14 +107,14 @@ class WorkerClient:
                 backend = TekkenV7(real_backend)
             else:
                 backend = real_backend
-                real_backend = None
+                
         elif backend_type == "Ollama":
             real_backend = OllamaBackend(self.backend_configs["Ollama"])
             if wrapper_name == "TekkenV7":
                 backend = TekkenV7(real_backend)
             else:
                 backend = real_backend
-                real_backend = None
+                
         elif backend_type == "Gigachat":
             real_backend = GigaChatBackend(self.backend_configs["Gigachat"])
             if wrapper_name == "TekkenV7":
@@ -123,7 +122,7 @@ class WorkerClient:
                 print("Warning: TekkenV7 shouldn't be used with online providers like Gigachat.")
             else:
                 backend = real_backend
-                real_backend = None
+                
         elif backend_type == "vLLM":
             real_backend = VllmBackend(self.backend_configs["vLLM"])
             if wrapper_name == "TekkenV7":
@@ -131,7 +130,7 @@ class WorkerClient:
                 print("Warning: It is recommended to use vLLM's built-in support of mistal-common tokenization for advances multimodal support.")
             else:
                 backend = real_backend
-                real_backend = None
+                
         else:
             raise ValueError(f"Unsupported backend: {backend_type}")
             
@@ -209,110 +208,123 @@ class WorkerClient:
 
         model_aliases = task.get("models", [])
         if not model_aliases:
-            legacy_alias = task.get("model_alias")
-            if legacy_alias:
-                model_aliases = [legacy_alias]
-            else:
-                print(f"[DEBUG] load_model_for_task: No models specified in task")
-                return None
+            print("[Worker] No models specified for task")
+            return None
 
-        # First check if any model is already loaded
+        # First check if any model in the list is already loaded
         for model_alias in model_aliases:
             for instance_id, backend_instance in self.loaded_backends.items():
                 if backend_instance.model_alias == model_alias:
-                    print(f"[DEBUG] Using already loaded model: {model_alias}, instance_id: {instance_id}")
+                    print(f"[Worker] Using already loaded model: {model_alias}")
+
                     return instance_id
 
-        # Count active tasks for each model in the queue
-        queued_task_models = {}
-        for i in range(self.task_queue.qsize()):
-            try:
-                # Look at task without removing it
-                task = self.task_queue._queue[i]  
-                for model in task.get("models", []):
-                    queued_task_models[model] = queued_task_models.get(model, 0) + 1
-            except (IndexError, AttributeError):
-                # Queue might have changed during iteration
-                pass
-            
-        # Try to load the model with the most queued tasks first
-        model_priorities = [(m, queued_task_models.get(m, 0)) for m in model_aliases]
-        model_priorities.sort(key=lambda x: x[1], reverse=True)  # Sort by task count
+        # None of the requested models are loaded, try to load the first one
+        preferred_model_alias = model_aliases[0]
+        model_config = None
 
-        for model_alias, _ in model_priorities:
-            model_config = None
-            for config in self.model_configs:
-                if config.get("alias") == model_alias:
-                    model_config = config
-                    break
+        # Find the configuration for the preferred model
+        for config in self.model_configs:
+            if config.get("alias") == preferred_model_alias:
+                model_config = config
+                break
 
-            if not model_config:
-                continue  # Model config not found
+        if not model_config:
+            print(f"[Worker] Configuration for model {preferred_model_alias} not found")
+            return None
+        
 
-            # Check if we need to unload models to make space
-            vram_requirements = model_config.get("performance_metrics", {}).get("vram_requirement", [])
-            available_vram = await self.get_available_vram()
+        # Get VRAM requirements for this model
+        vram_requirements = model_config.get("performance_metrics", {}).get("vram_requirement", [])
+        backend_type = model_config.get("backend_type")
 
-            # Extend vram_requirements if needed
-            vram_requirements = vram_requirements + [0] * (len(available_vram) - len(vram_requirements))
+        if not backend_type:
+            print(f"[Worker] No backend type specified for model {preferred_model_alias}")
+            return None
 
-            # Check if we can load without unloading anything
-            can_load_directly = True
-            for gpu_idx, vram_needed in enumerate(vram_requirements):
-                if gpu_idx >= len(available_vram):
-                    break
-                if vram_needed > 0 and available_vram[gpu_idx] < vram_needed:
-                    can_load_directly = False
-                    break
+        # Check if we have enough VRAM available
+        available_vram = await self.get_available_vram()
+        needs_unloading = False
 
-            # If we can load directly, do it
-            if can_load_directly:
-                backend_type = model_config.get("backend", "TabbyAPI")
-                backend_instance = self._create_backend_instance(backend_type, model_config)
+        for gpu_idx, vram_needed in enumerate(vram_requirements):
+            if gpu_idx >= len(available_vram):
+                continue  # Skip if model requires more GPUs than available
 
-                try:
-                    await backend_instance.backend.load_model(model_config)
-                    instance_id = f"{model_alias}_{uuid.uuid4().hex[:8]}"
-                    self.loaded_backends[instance_id] = backend_instance
-                    return instance_id
-                except Exception as e:
-                    print(f"[DEBUG] Error loading model {model_alias}: {str(e)}")
-                    continue
+            if vram_needed > 0 and available_vram[gpu_idx] < vram_needed:
+                needs_unloading = True
+                break
 
-            # We need to unload some models
-            # First, identify models with no queued tasks that can be unloaded
+        if needs_unloading:
+            print(f"[Worker] Need to free up VRAM for model {preferred_model_alias}")
+
+            # Find models that are using the GPUs we need
             models_to_unload = []
             for instance_id, instance in self.loaded_backends.items():
-                model_name = instance.model_alias
-                active_tasks = self.model_active_tasks.get(instance_id, 0)
-                queued_tasks = queued_task_models.get(model_name, 0)
+                # Check if this model uses any GPU that we need
+                for gpu_idx, vram_needed in enumerate(vram_requirements):
+                    if vram_needed > 0 and instance.gpu_allocation[gpu_idx] > 0:
+                        # Only unload if no active tasks are using this model
+                        model_in_use = False
+                        for task in self.processing_tasks:
+                            if hasattr(task, 'task_data'):
+                                task_models = task.task_data.get("models", [])
+                                if instance.model_alias in task_models:
+                                    model_in_use = True
+                                    break
+                                
+                        if not model_in_use:
+                            models_to_unload.append(instance_id)
+                            break
 
-                # If model has no active tasks and no queued tasks, consider unloading
-                if active_tasks == 0 and queued_tasks == 0:
-                    models_to_unload.append(instance_id)
-
-            # Unload models to free up GPU memory
+            # Unload models to free up VRAM
             for instance_id in models_to_unload:
+                print(f"[Worker] Unloading model {self.loaded_backends[instance_id].model_alias} to free up VRAM")
                 await self.unload_backend(instance_id)
 
-            # Check available VRAM again after unloading
+            # Check again if we have enough VRAM now
             available_vram = await self.get_available_vram()
+            for gpu_idx, vram_needed in enumerate(vram_requirements):
+                if gpu_idx >= len(available_vram):
+                    continue
 
-            # Try to load the model now that we've freed up space
-            backend_type = model_config.get("backend", "TabbyAPI")
+                if vram_needed > 0 and available_vram[gpu_idx] < vram_needed:
+                    print(f"[Worker] Still not enough VRAM on GPU {gpu_idx} for model {preferred_model_alias}")
+                    return None
+
+        # We have enough VRAM, load the model
+        print(f"[Worker] Loading model: {preferred_model_alias}")
+        try:
+            # Create a unique ID for this backend instance
+            instance_id = str(uuid.uuid4())
+
+            # Create the backend instance
             backend_instance = self._create_backend_instance(backend_type, model_config)
 
-            try:
-                await backend_instance.backend.load_model(model_config)
-                instance_id = f"{model_alias}_{uuid.uuid4().hex[:8]}"
-                self.loaded_backends[instance_id] = backend_instance
-                return instance_id
-            except Exception as e:
-                print(f"[DEBUG] Error loading model after unloading: {str(e)}")
-                continue
+            # Load the model
+            load_config = ModelLoadConfig(
+                model_name=model_config.get("model_name", preferred_model_alias),
+                model_path=model_config.get("model_path"),
+                revision=model_config.get("revision"),
+                config=model_config.get("config", {})
+            )
 
-        # If we get here, none of the models could be loaded
-        return None
+            if backend_instance.real_backend:
+                await backend_instance.real_backend.load_model(load_config)
+            else:
+                await backend_instance.backend.load_model(load_config)
+
+            # Store the loaded backend
+            self.loaded_backends[instance_id] = backend_instance
+
+
+            print(f"[Worker] Successfully loaded model: {preferred_model_alias}")
+            return instance_id
+
+        except Exception as e:
+            print(f"[Worker] Error loading model {preferred_model_alias}: {str(e)}")
+            return None
+            
+        
                     
     async def unload_backend(self, instance_id: str) -> bool:
         """Unload a backend instance by its ID"""
@@ -320,20 +332,27 @@ class WorkerClient:
             return False
             
         backend_instance = self.loaded_backends[instance_id]
+        model_alias = backend_instance.model_alias
+        
+        # Lock the model before unloading
+        self.model_locks.add(model_alias)
+        
         try:
+            del self.loaded_backends[instance_id]
+            
             if backend_instance.real_backend:
                 await backend_instance.real_backend.unload_model()
             else:
                 await backend_instance.backend.unload_model()
-            print(f"[Worker] Unloaded model: {backend_instance.model_alias}")
-            del self.loaded_backends[instance_id]
-            # Remove from active tasks tracking
-            if instance_id in self.model_active_tasks:
-                del self.model_active_tasks[instance_id]
+            print(f"[Worker] Unloaded model: {model_alias}")
+                
             return True
         except Exception as e:
-            print(f"[Worker] Error unloading model {backend_instance.model_alias}: {str(e)}")
+            print(f"[Worker] Error unloading model {model_alias}: {str(e)}")
             return False
+        finally:
+            # Always remove the lock when done
+            self.model_locks.discard(model_alias)
 
     async def producer_loop(self):
         """
@@ -342,16 +361,13 @@ class WorkerClient:
         """
         while True:
             fetched_any = False
-            current_size = self.task_queue.qsize()
-            if current_size < self.buffer_size:
-                num_to_fetch = self.buffer_size - current_size
-                tasks = await self.request_tasks(num_to_fetch)
-                if tasks:
-                    fetched_any = True
-                    for task in tasks:
-                        print("[Producer] Adding task to local queue:", task.get("id"))
-                        await self.task_queue.put(task)
-                    print(f"[Producer] Fetched {len(tasks)} tasks. Queue size: {self.task_queue.qsize()}")
+            tasks = await self.request_tasks(999)
+            if tasks:
+                fetched_any = True
+                for task in tasks:
+                    print("[Producer] Adding task to local queue:", task.get("id"), " Task for models: ", task.get("models"))
+                    await self.task_queue.put(task)
+                print(f"[Producer] Fetched {len(tasks)} tasks. Queue size: {self.task_queue.qsize()}")
             if not fetched_any:
                 try:
                     await asyncio.wait_for(self.tasks_available_event.wait(), timeout=1.0)
@@ -384,125 +400,132 @@ class WorkerClient:
             self.processing_tasks = {t for t in self.processing_tasks if not t.done()}
 
             # Check if we can process more tasks
-            if len(self.processing_tasks) < self.batch_size:
-                if self.task_queue.empty():
-                    await asyncio.sleep(0.1)
-                    continue
+            #if len(self.processing_tasks) < self.batch_size:
+            if self.task_queue.empty():
+                await asyncio.sleep(0.1)
+                continue
 
-                # Group tasks by model
-                model_tasks = {}
-                temp_queue = asyncio.Queue()
+            # Process model groups, prioritizing models that are already loaded
+            already_loaded_models = set()
+            for instance_id, backend_instance in self.loaded_backends.items():
+                already_loaded_models.add(backend_instance.model_alias)
 
-                # Examine up to batch_size tasks and group them by model
-                tasks_examined = 0
-                while not self.task_queue.empty() and tasks_examined < self.batch_size:
-                    task_data = await self.task_queue.get()
-                    tasks_examined += 1
 
-                    model_aliases = task_data.get("models", [])
-                    if not model_aliases:
-                        # Put tasks without model requirements back in queue
-                        await temp_queue.put(task_data)
+            while not self.task_queue.empty():
+                task_data = await self.task_queue.get()
+
+
+                model_aliases = task_data.get("models", [])
+                if any(alias in already_loaded_models for alias in model_aliases):
+                    # Check if any required model is locked
+                    if any(alias in self.model_locks for alias in model_aliases):
+                        # Model is locked (loading/unloading in progress), put task back in queue
+                        await self.task_queue.put(task_data)
+                        self.task_queue.task_done()
+                        continue
+                        
+                    task = asyncio.create_task(
+                        self.process_one_task_wrapper(task_data)
+                    )
+                    task.job_name = task_data.get("job_name")
+                    task.task_data = task_data
+                    self.processing_tasks.add(task)
+                    
+                    self.task_queue.task_done()
+
+                    # model_parallel_limit = self.loaded_backends[instance_id].model_config.get("performance_metrics", {}).get("parallel_requests", 1)
+                else:
+                    # Check if the preferred model is locked
+                    if model_aliases and model_aliases[0] in self.model_locks:
+                        # Preferred model is locked, put task back in queue
+                        await self.task_queue.put(task_data)
                         self.task_queue.task_done()
                         continue
                     
-                    # Group by first model in list
-                    model_alias = model_aliases[0]
-                    if model_alias not in model_tasks:
-                        model_tasks[model_alias] = []
-                    model_tasks[model_alias].append(task_data)
-                    self.task_queue.task_done()
+                    # Check if the GPUs required by the task's first model are already in use
+                    gpu_conflict = False
 
-                # Process model groups, prioritizing models that are already loaded
-                already_loaded_models = set()
-                for instance_id, backend_instance in self.loaded_backends.items():
-                    already_loaded_models.add(backend_instance.model_alias)
-
-                # Process models that are already loaded first
-                for model_alias in list(model_tasks.keys()):
-                    if model_alias in already_loaded_models:
-                        tasks = model_tasks.pop(model_alias)
-
-                        # Get the instance ID for this model
-                        instance_id = None
-                        for id, instance in self.loaded_backends.items():
-                            if instance.model_alias == model_alias:
-                                instance_id = id
+                    # Get the first preferred model's configuration
+                    preferred_model = model_aliases[0]
+                    model_config = None
+                    
+                    if preferred_model:
+                        for config in self.model_configs:
+                            if config.get("alias") == preferred_model:
+                                model_config = config
                                 break
                             
-                        if instance_id:
-                            # Process tasks for this already-loaded model
-                            for task_data in tasks:
-                                if len(self.processing_tasks) < self.batch_size:
-                                    model_parallel_limit = self.loaded_backends[instance_id].model_config.get(
-                                        "performance_metrics", {}).get("parallel_requests", 1)
-                                    current_model_tasks = self.model_active_tasks.get(instance_id, 0)
+                    if model_config:
+                    # Get the GPUs this model would need
+                        required_gpus = []
+                        vram_requirements = model_config.get("performance_metrics", {}).get("vram_requirement", [])
 
-                                    if current_model_tasks < model_parallel_limit:
-                                        task = asyncio.create_task(
-                                            self.process_one_task_wrapper(task_data)
-                                        )
-                                        task.job_name = task_data.get("job_name")
-                                        self.processing_tasks.add(task)
-                                    else:
-                                        # Model at capacity
-                                        await temp_queue.put(task_data)
-                                else:
-                                    # Global batch limit reached
-                                    await temp_queue.put(task_data)
+                        for gpu_idx, vram_needed in enumerate(vram_requirements):
+                            if vram_needed > 0:
+                                required_gpus.append(gpu_idx)
 
-                # Now try to load and process any remaining model groups
-                for model_alias, tasks in model_tasks.items():
-                    instance_id = await self.load_model_for_task({"models": [model_alias]})
+                        # Check if any of the required GPUs are in use by other processing tasks
+                        for task in self.processing_tasks:
+                            if hasattr(task, 'task_data'):
+                                task_model_alias = None
+                                task_models = task.task_data.get("models", [])
 
-                    if instance_id:
-                        # Process tasks for this newly-loaded model
-                        for task_data in tasks:
-                            if len(self.processing_tasks) < self.batch_size:
-                                model_parallel_limit = self.loaded_backends[instance_id].model_config.get(
-                                    "performance_metrics", {}).get("parallel_requests", 1)
-                                current_model_tasks = self.model_active_tasks.get(instance_id, 0)
-
-                                if current_model_tasks < model_parallel_limit:
-                                    task = asyncio.create_task(
-                                        self.process_one_task_wrapper(task_data)
-                                    )
-                                    task.job_name = task_data.get("job_name")
-                                    self.processing_tasks.add(task)
-                                else:
-                                    # Model at capacity
-                                    await temp_queue.put(task_data)
-                            else:
-                                # Global batch limit reached
-                                await temp_queue.put(task_data)
+                                if task_models:
+                                    # Find which backend is handling this task
+                                    for backend_id, backend in self.loaded_backends.items():
+                                        if backend.model_alias in task_models:
+                                            # Check if this model uses any of the same GPUs
+                                            for gpu_idx in required_gpus:
+                                                if gpu_idx in backend.loaded_on_gpus:
+                                                    gpu_conflict = True
+                                                    break
+                                                
+                                            if gpu_conflict:
+                                                break
+                                            
+                                if gpu_conflict:
+                                    break
+                                
+                    if gpu_conflict:
+                        # GPUs needed by this task are in use, put it back in queue
+                        await self.task_queue.put(task_data)
+                        self.task_queue.task_done()
                     else:
-                        # Couldn't load this model, mark as error
-                        for task_data in tasks:
-                            task_data["error"] = f"Could not load model: {model_alias}"
-                            await self.completed_queue.put(task_data)
+                        preferred_model = model_aliases[0]
+                        
 
-                # Put any unprocessed tasks back into the queue
-                while not temp_queue.empty():
-                    await self.task_queue.put(await temp_queue.get())
-            else:
-                # We're at global batch limit
-                await asyncio.sleep(0.1)
+                        loading_task = asyncio.create_task(self.load_model_for_task({"models": [preferred_model]}))
+                        
+                        self.model_locks.add(preferred_model)
+                        
+                        
+                        # Set up callback to clean up when loading is complete
+                        def on_model_loaded(task):
+                            try:
+                                # Get the instance_id from the completed task
+                                result = task.result()
+                                print(f"[Worker] Model {preferred_model} loaded with instance_id: {result}")
+                            except Exception as e:
+                                print(f"[Worker] Error loading model {preferred_model}: {e}")
+                            finally:
+                                
+                                self.model_locks.discard(preferred_model)
+                        loading_task.add_done_callback(on_model_loaded)
+
+                        # Put the task back in queue to be processed later when model is available
+                        await self.task_queue.put(task_data)
+                        self.task_queue.task_done()
+
+
 
     async def process_one_task_wrapper(self, task_data: Dict[str, Any]):
         """
         Wrapper to process a task and put it in the completed queue.
         """
         # Get the model for this task before processing
-        backend_instance_id = None
-        
+
         try:
-            # Load model and get instance ID
-            backend_instance_id = await self.load_model_for_task(task_data)
-            
-            if backend_instance_id:
-                # Increment active task count for this model
-                self.model_active_tasks[backend_instance_id] = self.model_active_tasks.get(backend_instance_id, 0) + 1
-            
+
             # For streaming tasks, we don't put them in the completed queue 
             # as they are sent chunk by chunk
             if task_data.get("stream", False):
@@ -532,9 +555,7 @@ class WorkerClient:
             
             print(f"Error processing task: {e}")
         finally:
-            # Decrement active task count for this model when done
-            if backend_instance_id:
-                self.model_active_tasks[backend_instance_id] = max(0, self.model_active_tasks.get(backend_instance_id, 1) - 1)
+            pass
 
     async def submit_loop(self):
         """
@@ -861,8 +882,8 @@ class WorkerClient:
         
         # Use the backend that was already determined in the consumer loop
         backend_instance_id = await self.get_suitable_model_for_task(task)
-        if not backend_instance_id:
-            backend_instance_id = await self.load_model_for_task(task)
+        
+        
             
         if not backend_instance_id:
             error_msg = f"Could not load model for task: {task_id}"
