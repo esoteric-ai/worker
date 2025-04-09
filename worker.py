@@ -409,6 +409,8 @@ class WorkerClient:
             
             print(f"[Consumer] Currently loaded models: {already_loaded_models}")
 
+            deferred_tasks = []
+
             while not self.task_queue.empty():
                 # print(f"[Consumer] Processing task from queue. Queue size: {self.task_queue.qsize()}")
                 task_data = await self.task_queue.get()
@@ -425,7 +427,7 @@ class WorkerClient:
                         # Model is locked (loading/unloading in progress), put task back in queue
                         locked_models = [alias for alias in model_aliases if alias in self.model_locks]
                         print(f"[Consumer] Task {task_id}: Models {locked_models} are locked. Deferring task.")
-                        await self.task_queue.put(task_data)
+                        deferred_tasks.append(task_data)
                         self.task_queue.task_done()
                         continue
                     
@@ -446,7 +448,7 @@ class WorkerClient:
                     if model_aliases and model_aliases[0] in self.model_locks:
                         # Preferred model is locked, put task back in queue
                         # print(f"[Consumer] Task {task_id}: Preferred model {model_aliases[0]} is locked. Deferring task.")
-                        await self.task_queue.put(task_data)
+                        deferred_tasks.append(task_data)
                         self.task_queue.task_done()
                         continue
                     
@@ -505,7 +507,7 @@ class WorkerClient:
                     if gpu_conflict:
                         # GPUs needed by this task are in use, put it back in queue
                         print(f"[Consumer] Task {task_id}: GPU conflict detected. Deferring task.")
-                        await self.task_queue.put(task_data)
+                        deferred_tasks.append(task_data)
                         self.task_queue.task_done()
                     else:
                         preferred_model = model_aliases[0] if model_aliases else None
@@ -531,8 +533,11 @@ class WorkerClient:
                             loading_task.add_done_callback(on_model_loaded)
 
                             # Put the task back in
-                            await self.task_queue.put(task_data)
+                            deferred_tasks.append(task_data)
                             self.task_queue.task_done()
+            
+            for task_data in deferred_tasks:
+                await self.task_queue.put(task_data)
 
 
     async def process_one_task_wrapper(self, task_data: Dict[str, Any]):
