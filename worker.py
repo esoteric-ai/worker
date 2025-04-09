@@ -395,7 +395,7 @@ class WorkerClient:
             if old_task_count != len(self.processing_tasks):
                 print(f"[Consumer] Cleaned up tasks. Before: {old_task_count}, After: {len(self.processing_tasks)}")
 
-            print("Hello.")
+            # print("Hello.")
             
             # Check if we can process more tasks
             if self.task_queue.empty():
@@ -407,7 +407,7 @@ class WorkerClient:
             for instance_id, backend_instance in self.loaded_backends.items():
                 already_loaded_models.add(backend_instance.model_alias)
             
-            print(f"[Consumer] Currently loaded models: {already_loaded_models}")
+            # print(f"[Consumer] Currently loaded models: {already_loaded_models}")
 
             deferred_tasks = []
 
