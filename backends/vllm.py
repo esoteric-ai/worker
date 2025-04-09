@@ -210,6 +210,8 @@ class VllmBackend(Backend):
         if mm_processor_kwargs:
             extra_body["mm_processor_kwargs"] = mm_processor_kwargs
         
+        print("CHAT COMPLETION INCOMING.")
+        
         try:
             if stream:
                 async def response_generator():
@@ -227,7 +229,7 @@ class VllmBackend(Backend):
                     **request_body,
                     extra_body=extra_body,
                 )
-
+                print("CHAT COMPLETION RESPONSE.")
                 return response.model_dump()
             
         except Exception as e:
