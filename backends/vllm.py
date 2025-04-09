@@ -204,9 +204,12 @@ class VllmBackend(Backend):
             "top_k": params.get("top_k", 1),
             "repetition_penalty": params.get("repetition_penalty", 1.0),
             "frequency_penalty": params.get("frequency_penalty", 0.0),
-            "presence_penalty": params.get("presence_penalty", 0.0),
-            "mm_processor_kwargs": mm_processor_kwargs
+            "presence_penalty": params.get("presence_penalty", 0.0)
         }
+        
+        if mm_processor_kwargs:
+            extra_body["mm_processor_kwargs"] = mm_processor_kwargs
+        
         try:
             if stream:
                 async def response_generator():
