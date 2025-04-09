@@ -504,7 +504,7 @@ class WorkerClient:
                                 required_gpus.append(gpu_idx)
                         
                         if any(gpu_idx in self.gpu_locks for gpu_idx in required_gpus):
-                            print(f"[Consumer] Task {task_id}: Required GPU(s) are locked. Deferring task.")
+                            #print(f"[Consumer] Task {task_id}: Required GPU(s) are locked. Deferring task.")
                             gpu_conflict = True
                         
                         # print(f"[Consumer] Task {task_id}: Model {preferred_model} requires GPUs: {required_gpus}")
@@ -536,7 +536,7 @@ class WorkerClient:
                                 
                     if gpu_conflict:
                         # GPUs needed by this task are in use, put it back in queue
-                        print(f"[Consumer] Task {task_id}: GPU conflict detected. Deferring task.")
+                        # print(f"[Consumer] Task {task_id}: GPU conflict detected. Deferring task.")
                         deferred_tasks.append(task_data)
                         self.task_queue.task_done()
                     else:
