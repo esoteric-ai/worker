@@ -410,7 +410,7 @@ class WorkerClient:
             while not self.task_queue.empty():
                 print(f"[Consumer] Processing task from queue. Queue size: {self.task_queue.qsize()}")
                 task_data = await self.task_queue.get()
-                
+                print(task_data)
                 model_aliases = task_data.get("models", [])
                 task_id = task_data.get("id", "unknown")
                 print(f"[Consumer] Task {task_id} requests models: {model_aliases}")
