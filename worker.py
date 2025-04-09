@@ -473,7 +473,7 @@ class WorkerClient:
                             if config.get("alias") == alias:
                                 parallel_limit = config.get("performance_metrics", {}).get("parallel_requests", 1)
                                 if active_requests_per_model.get(alias, 0) >= parallel_limit:
-                                    print(f"[Consumer] Task {task_id}: Model {alias} already has {active_requests_per_model[alias]} active requests (limit: {parallel_limit})")
+                                    
                                     parallel_requests_limit_reached = True
                                     break
                         if parallel_requests_limit_reached:
