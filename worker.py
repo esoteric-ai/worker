@@ -59,7 +59,8 @@ class WorkerClient:
                 api_key=cfg.get("tabby_api_key"),
                 run_path=cfg.get("tabby_run_path"),
                 run_arguments=cfg.get("tabby_run_arguments"),
-                environment=cfg.get("tabby_environment")
+                environment=cfg.get("tabby_environment"),
+                template_map=cfg.get("tabby_template_map")
             ),
             "Ollama": OllamaBackendConfig(
                 base_url=cfg.get("ollama_api_url", "http://127.0.0.1"),

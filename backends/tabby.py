@@ -17,7 +17,7 @@ class TabbyBackendConfig(TypedDict):
     run_path: str = None
     run_arguments: str = None
     environment: Optional[Dict[str, str]] = None
-    
+    template_map: Optional[Dict[str, str]] = None
 
 class TabbyBackend(Backend):
     def __init__(
@@ -59,6 +59,10 @@ class TabbyBackend(Backend):
             "max_seq_len": context_length,
             "chunk_size" : 2048,
         }
+        
+        template_map = self.config.get("template_map", {})
+        if template_map and api_name in template_map:
+            request_body["prompt_template"] = template_map[api_name]
 
         if "gpu_split" in load_options:
             request_body["gpu_split"] = load_options["gpu_split"]
