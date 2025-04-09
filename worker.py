@@ -422,13 +422,12 @@ class WorkerClient:
                 # print(f"[Consumer] Task {task_id} requests models: {model_aliases}")
 
                 if any(alias in already_loaded_models for alias in model_aliases):
-                    print(f"[Consumer] Task {task_id}: Found requested model(s) already loaded")
                     
                     # Check if any required model is locked
                     if any(alias in self.model_locks for alias in model_aliases):
                         # Model is locked (loading/unloading in progress), put task back in queue
                         locked_models = [alias for alias in model_aliases if alias in self.model_locks]
-                        print(f"[Consumer] Task {task_id}: Models {locked_models} are locked. Deferring task.")
+                        
                         deferred_tasks.append(task_data)
                         self.task_queue.task_done()
                         continue
