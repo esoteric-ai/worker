@@ -300,18 +300,10 @@ class WorkerClient:
             # Create the backend instance
             backend_instance = self._create_backend_instance(backend, model_config)
 
-            # Load the model
-            load_config = ModelLoadConfig(
-                model_name=model_config.get("model_name", preferred_model_alias),
-                model_path=model_config.get("model_path"),
-                revision=model_config.get("revision"),
-                config=model_config.get("config", {})
-            )
-
             if backend_instance.real_backend:
-                await backend_instance.real_backend.load_model(load_config)
+                await backend_instance.real_backend.load_model(model_config)
             else:
-                await backend_instance.backend.load_model(load_config)
+                await backend_instance.backend.load_model(model_config)
 
             # Store the loaded backend
             self.loaded_backends[instance_id] = backend_instance
@@ -405,7 +397,6 @@ class WorkerClient:
 
             # Check if we can process more tasks
             if self.task_queue.empty():
-                print("[Consumer] Task queue empty, waiting...")
                 await asyncio.sleep(0.1)
                 continue
 
