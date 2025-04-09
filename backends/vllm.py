@@ -210,7 +210,6 @@ class VllmBackend(Backend):
         if mm_processor_kwargs:
             extra_body["mm_processor_kwargs"] = mm_processor_kwargs
         
-        print(request_body, extra_body)
         
         try:
             if stream:
@@ -225,26 +224,12 @@ class VllmBackend(Backend):
 
                 return response_generator()
             else:
+                response = await self.openai_client.chat.completions.create(
+                    **request_body,
+                    extra_body=extra_body,
+                )
                 
-                headers = {"Content-Type": "application/json"}
-                if self.config.get("api_key"):
-                    headers["Authorization"] = f"Bearer {self.config.get('api_key')}"
-                
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        f"{self.config.get('base_url')}/v1/chat/completions",
-                        json={**request_body, **extra_body},
-                        headers=headers
-                    )
-                    response.raise_for_status()
-                    return response.json()
-                
-                #response = await self.openai_client.chat.completions.create(
-                #    **request_body,
-                #    extra_body=extra_body,
-                #)
-                #print("CHAT COMPLETION RESPONSE.")
-                #return response.model_dump()
+                return response.model_dump()
             
         except Exception as e:
             print(f"ERROR in chat_completion: {type(e).__name__}: {str(e)}")
