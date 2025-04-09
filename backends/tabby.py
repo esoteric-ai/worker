@@ -240,6 +240,8 @@ class TabbyBackend(Backend):
             "frequency_penalty": params.get("frequency_penalty", 0.0),
             "presence_penalty": params.get("presence_penalty", 0.0),
 
+            "skip_special_tokens": False,
+
             # Not implemented yet parameters
             "penalty_range": -1,
             "top_a": 0.0,
