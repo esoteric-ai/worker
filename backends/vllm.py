@@ -206,7 +206,7 @@ class VllmBackend(Backend):
             "frequency_penalty": params.get("frequency_penalty", 0.0),
             "presence_penalty": params.get("presence_penalty", 0.0)
         }
-        
+        print("mm_orice", mm_processor_kwargs)
         if mm_processor_kwargs != {}:
             extra_body["mm_processor_kwargs"] = mm_processor_kwargs
         
