@@ -49,6 +49,7 @@ class WorkerClient:
         self.model_configs: List[ModelConfig] = cfg.get("model_configs", [])
         
         self.model_locks = set()
+        self.gpu_locks = set()
         
          # Backend configurations
         self.backend_configs = {
@@ -298,15 +299,6 @@ class WorkerClient:
             else:
                 await backend_instance.backend.load_model(model_config)
 
-            placeholder_ids = []
-            for temp_id, temp_instance in self.loaded_backends.items():
-                if (temp_id.startswith(f"loading_{preferred_model_alias}_") and 
-                    temp_instance.wrapper_name == "loading_placeholder"):
-                    placeholder_ids.append(temp_id)
-                    
-            for temp_id in placeholder_ids:
-                print(f"[Worker] Removing temporary placeholder for model {preferred_model_alias}")
-                del self.loaded_backends[temp_id]
 
             # Store the loaded backend
             self.loaded_backends[instance_id] = backend_instance
@@ -332,6 +324,12 @@ class WorkerClient:
         # Lock the model before unloading
         self.model_locks.add(model_alias)
         
+        gpus_to_lock = backend_instance.loaded_on_gpus
+        for gpu_idx in gpus_to_lock:
+            self.gpu_locks.add(gpu_idx)
+            print(f"[Worker] Locking GPU {gpu_idx} for unloading model {model_alias}")
+        
+        
         try:
             del self.loaded_backends[instance_id]
             
@@ -352,6 +350,9 @@ class WorkerClient:
         finally:
             # Always remove the lock when done
             self.model_locks.discard(model_alias)
+            for gpu_idx in gpus_to_lock:
+                self.gpu_locks.discard(gpu_idx)
+                print(f"[Worker] Unlocking GPU {gpu_idx} after unloading model {model_alias}")
 
     async def producer_loop(self):
         """
@@ -436,6 +437,23 @@ class WorkerClient:
                         self.task_queue.task_done()
                         continue
                     
+                    # Check if any required GPU is locked
+                    gpu_conflict = False
+                    for alias in model_aliases:
+                        for instance_id, instance in self.loaded_backends.items():
+                            if instance.model_alias == alias:
+                                # Check if any of this model's GPUs are locked
+                                if any(gpu_idx in self.gpu_locks for gpu_idx in instance.loaded_on_gpus):
+                                    gpu_conflict = True
+                                    break
+                        if gpu_conflict:
+                            break
+                    
+                    if gpu_conflict:
+                        deferred_tasks.append(task_data)
+                        self.task_queue.task_done()
+                        continue
+                    
                     print(f"[Consumer] Task {task_id}: Creating processing task")
                     task = asyncio.create_task(
                         self.process_one_task_wrapper(task_data)
@@ -456,6 +474,8 @@ class WorkerClient:
                         deferred_tasks.append(task_data)
                         self.task_queue.task_done()
                         continue
+                    
+                    
                     
                     # Check if the GPUs required by the task's first model are already in use
                     gpu_conflict = False
@@ -483,31 +503,36 @@ class WorkerClient:
                             if vram_needed > 0:
                                 required_gpus.append(gpu_idx)
                         
+                        if any(gpu_idx in self.gpu_locks for gpu_idx in required_gpus):
+                            print(f"[Consumer] Task {task_id}: Required GPU(s) are locked. Deferring task.")
+                            gpu_conflict = True
+                        
                         # print(f"[Consumer] Task {task_id}: Model {preferred_model} requires GPUs: {required_gpus}")
 
                         # Check if any of the required GPUs are in use by other processing tasks
-                        for task in self.processing_tasks:
-                            if hasattr(task, 'task_data'):
-                                task_models = task.task_data.get("models", [])
+                        if not gpu_conflict:
+                            for task in self.processing_tasks:
+                                if hasattr(task, 'task_data'):
+                                    task_models = task.task_data.get("models", [])
 
-                                if task_models:
-                                    # print(f"[Consumer] Task {task_id}: Checking conflict with task using models {task_models}")
-                                    # Find which backend is handling this task
-                                    for backend_id, backend in self.loaded_backends.items():
-                                        if backend.model_alias in task_models:
-                                            # Check if this model uses any of the same GPUs
-                                            # print(f"[Consumer] Task {task_id}: Found task using model {backend.model_alias} on GPUs {backend.loaded_on_gpus}")
-                                            for gpu_idx in required_gpus:
-                                                if gpu_idx in backend.loaded_on_gpus:
-                                                    gpu_conflict = True
-                                                    # print(f"[Consumer] Task {task_id}: GPU conflict detected on GPU {gpu_idx}")
+                                    if task_models:
+                                        # print(f"[Consumer] Task {task_id}: Checking conflict with task using models {task_models}")
+                                        # Find which backend is handling this task
+                                        for backend_id, backend in self.loaded_backends.items():
+                                            if backend.model_alias in task_models:
+                                                # Check if this model uses any of the same GPUs
+                                                # print(f"[Consumer] Task {task_id}: Found task using model {backend.model_alias} on GPUs {backend.loaded_on_gpus}")
+                                                for gpu_idx in required_gpus:
+                                                    if gpu_idx in backend.loaded_on_gpus:
+                                                        gpu_conflict = True
+                                                        # print(f"[Consumer] Task {task_id}: GPU conflict detected on GPU {gpu_idx}")
+                                                        break
+                                                    
+                                                if gpu_conflict:
                                                     break
                                                 
-                                            if gpu_conflict:
-                                                break
-                                            
-                                if gpu_conflict:
-                                    break
+                                    if gpu_conflict:
+                                        break
                                 
                     if gpu_conflict:
                         # GPUs needed by this task are in use, put it back in queue
@@ -524,26 +549,18 @@ class WorkerClient:
                                 if config.get("alias") == preferred_model:
                                     model_config = config
                                     break
-                                    
-                            # Create temporary placeholder backend to reserve GPU resources
-                            if model_config:
-                                temp_instance_id = f"loading_{preferred_model}_{str(uuid.uuid4())}"
-                                # Create a minimal placeholder backend instance that just reserves the GPU
-                                temp_backend = type('DummyBackend', (), {'load_model': lambda x: None, 'unload_model': lambda: None})()
-                                temp_instance = BackendInstance(
-                                    backend=temp_backend,
-                                    real_backend=None,
-                                    model_config=model_config,
-                                    wrapper_name="loading_placeholder"
-                                )
-                                # Add to loaded_backends to reserve the GPU allocation
-                                self.loaded_backends[temp_instance_id] = temp_instance
-                                print(f"[Consumer] Task {task_id}: Created temporary GPU reservation for {preferred_model}")
-                            
-                            loading_task = asyncio.create_task(self.load_model_for_task({"models": [preferred_model]}))
                             
                             self.model_locks.add(preferred_model)
                             print(f"[Consumer] Task {task_id}: Added lock for model {preferred_model}")
+                            
+                            # Lock the GPUs this model will need
+                            for gpu_idx in required_gpus:
+                                self.gpu_locks.add(gpu_idx)
+                                print(f"[Consumer] Task {task_id}: Added lock for GPU {gpu_idx}")
+                            
+                            loading_task = asyncio.create_task(self.load_model_for_task({"models": [preferred_model]}))
+                            
+                            
                             
                             # Set up callback to clean up when loading is complete
                             def on_model_loaded(task):
@@ -556,6 +573,11 @@ class WorkerClient:
                                 finally:
                                     self.model_locks.discard(preferred_model)
                                     print(f"[Consumer] Removed lock for model {preferred_model}")
+                                    
+                                    # Also remove GPU locks
+                                    for gpu_idx in required_gpus:
+                                        self.gpu_locks.discard(gpu_idx)
+                                        print(f"[Consumer] Removed lock for GPU {gpu_idx}")
                                     
                             loading_task.add_done_callback(on_model_loaded)
 
