@@ -497,6 +497,13 @@ class WorkerClient:
                     task.task_data = task_data
                     self.processing_tasks.add(task)
                     
+                    # Increment active requests counters for the models used
+                    for alias in model_aliases:
+                        for instance_id, instance in self.loaded_backends.items():
+                            if instance.model_alias == alias:
+                                instance.active_requests += 1
+                                print(f"[Consumer] Model {alias} now has {instance.active_requests}/{instance.parallel_requests} active requests")
+                    
                     print(f"[Consumer] Task {task_id} added to processing_tasks. Total processing: {len(self.processing_tasks)}")
                     self.task_queue.task_done()
 
