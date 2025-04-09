@@ -408,12 +408,12 @@ class WorkerClient:
             print(f"[Consumer] Currently loaded models: {already_loaded_models}")
 
             while not self.task_queue.empty():
-                print(f"[Consumer] Processing task from queue. Queue size: {self.task_queue.qsize()}")
+                # print(f"[Consumer] Processing task from queue. Queue size: {self.task_queue.qsize()}")
                 task_data = await self.task_queue.get()
                 
                 model_aliases = task_data.get("models", [])
                 task_id = task_data.get("id", "unknown")
-                print(f"[Consumer] Task {task_id} requests models: {model_aliases}")
+                # print(f"[Consumer] Task {task_id} requests models: {model_aliases}")
 
                 if any(alias in already_loaded_models for alias in model_aliases):
                     print(f"[Consumer] Task {task_id}: Found requested model(s) already loaded")
@@ -439,11 +439,11 @@ class WorkerClient:
                     self.task_queue.task_done()
 
                 else:
-                    print(f"[Consumer] Task {task_id}: No requested models currently loaded")
+                    # print(f"[Consumer] Task {task_id}: No requested models currently loaded")
                     # Check if the preferred model is locked
                     if model_aliases and model_aliases[0] in self.model_locks:
                         # Preferred model is locked, put task back in queue
-                        print(f"[Consumer] Task {task_id}: Preferred model {model_aliases[0]} is locked. Deferring task.")
+                        # print(f"[Consumer] Task {task_id}: Preferred model {model_aliases[0]} is locked. Deferring task.")
                         await self.task_queue.put(task_data)
                         self.task_queue.task_done()
                         continue
