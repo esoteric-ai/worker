@@ -404,7 +404,7 @@ class WorkerClient:
                 print(f"[Consumer] Cleaned up tasks. Before: {old_task_count}, After: {len(self.processing_tasks)}")
 
             # print("Hello.")
-            print("HELLo")
+            # print("HELLo")
             # Check if we can process more tasks
             await asyncio.sleep(0.1)
             
