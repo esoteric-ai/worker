@@ -285,7 +285,7 @@ class TabbyBackend(Backend):
             # Re-raise to ensure benchmark correctly detects the failure
             raise
 
-    async def completion(self, prompt: str, stream: bool = False, max_tokens: int = 100, params: GenerationParams = PRECISE_PARAMS) -> Union[str, AsyncIterator]:
+    async def completion(self, prompt: str, stream: bool = False, max_tokens: int = 100, params: GenerationParams = PRECISE_PARAMS, extra={}) -> Union[str, AsyncIterator]:
 
         if not self.active_model:
             raise ValueError("No active model loaded. Call load_model() first.")
@@ -322,6 +322,13 @@ class TabbyBackend(Backend):
             "mirostat_tau": 5,
             "mirostat_eta": 0.1,
         }
+
+        if "response_format" in extra:
+            extra_body["response_format"] = extra["response_format"]
+            print(f"Response format: {extra_body['response_format']}")
+        
+        if "json_schema" in extra:
+            extra_body["json_schema"] = extra["json_schema"]
 
         try:
             response = await self.openai_client.completions.create(
