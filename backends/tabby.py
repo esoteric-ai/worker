@@ -299,7 +299,6 @@ class TabbyBackend(Backend):
 
         extra_body = {
             "temperature": params.get("temperature", 0.1),
-            "max_tokens": params.get("max_tokens", 700),
             "top_p": params.get("top_p", 1.0),
             "top_k": params.get("top_k", 1),
             "min_p": params.get("min_p", 0.0),
