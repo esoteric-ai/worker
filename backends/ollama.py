@@ -57,11 +57,17 @@ class OllamaBackend(Backend):
             if self.config.get("api_key"):
                 headers["Authorization"] = f"Bearer {self.config.get('api_key')}"
 
+            # Extract context length from model config
+            context_length = model.get("context_length", 8192)
+
             # Ollama load model request
             request_body = {
                 "model": api_name,
                 "messages": [],
-                "keep_alive": "24h"  # Keep the model loaded for 24 hours
+                "keep_alive": "24h",  # Keep the model loaded for 24 hours
+                "options": {
+                    "num_ctx": context_length
+                }
             }
 
             async with httpx.AsyncClient(timeout=None) as client:
