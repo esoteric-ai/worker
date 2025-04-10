@@ -45,12 +45,55 @@ class OllamaBackend(Backend):
     
     
     async def load_model(self, model: ModelConfig) -> None:
-        if not self.running:
-            await self.start()
-
         api_name = model.get("api_name")
         if not api_name:
             raise ValueError("Model API name is required")
+
+        # Get load options from model config
+        load_options = model.get("load_options", {})
+        model_env = load_options.get("environment", {})
+
+        # Start Ollama if not already running
+        if not self.running:
+            run_path = self.config.get("run_path")
+            run_arguments = self.config.get("run_arguments", "")
+
+            # Get environment from backend config
+            backend_env = self.config.get("environment", {})
+
+            # Override backend environment with model environment
+            environment = {**backend_env, **model_env} if model_env else backend_env
+
+            if not run_path:
+                raise ValueError("run_path is required")
+
+            try:
+                cmd = [run_path] + (run_arguments.split() if run_arguments else [])
+
+                kwargs = {'env': environment}
+
+                # On Unix systems, create a new process group
+                if sys.platform != "win32":
+                    import os
+                    kwargs['preexec_fn'] = os.setsid
+
+                self.process = subprocess.Popen(
+                    cmd,
+                    **kwargs
+                )
+
+                print(f"[OllamaBackend] Started backend process with PID {self.process.pid}")
+
+                await asyncio.sleep(10)
+
+                if self.process.poll() is not None:
+                    raise RuntimeError(f"Failed to start process: {self.process.returncode}")
+
+                self.running = True
+                self.pid = self.process.pid
+            except Exception as e:
+                self.process = None
+                raise RuntimeError(f"Failed to start Ollama backend: {str(e)}")
 
         try:
             headers = {"Content-Type": "application/json"}
@@ -82,7 +125,7 @@ class OllamaBackend(Backend):
 
             print(f"[OllamaBackend] Successfully loaded model: {api_name}")
             self.active_model = model
-        
+
         except Exception as e:
             raise RuntimeError(f"Failed to load model {api_name}: {str(e)}")
     
@@ -127,44 +170,6 @@ class OllamaBackend(Backend):
     async def start(self):
         if self.running:
             return
-        
-        run_path = self.config.get("run_path")
-        run_arguments = self.config.get("run_arguments", "")
-        environment = self.config.get("environment", {})
-        
-        if not run_path:
-            raise ValueError("run_path is required")
-        
-        try:
-            cmd = [run_path] + (run_arguments.split() if run_arguments else [])
-            
-            kwargs = {'env': environment}
-            
-            # On Unix systems, create a new process group
-            if sys.platform != "win32":
-                import os
-                kwargs['preexec_fn'] = os.setsid
-            
-            self.process = subprocess.Popen(
-                cmd,
-                # stdout=subprocess.PIPE, 
-                # stderr=subprocess.PIPE,
-                # shell=True,
-                # text=True
-                **kwargs
-            )
-            
-            print(f"[OllamaBackend] Started backend process with PID {self.process.pid}")
-            
-            await asyncio.sleep(10)
-            
-            if self.process.poll() is not None:
-                raise RuntimeError(f"Failed to start process: {self.process.stderr.read()}")
-                
-            self.running = True
-        except Exception as e:
-            self.process = None
-            raise RuntimeError(f"Failed to start Ollama backend: {str(e)}")
     
     async def stop(self):
         if not self.running:
