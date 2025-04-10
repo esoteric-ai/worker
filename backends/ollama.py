@@ -219,7 +219,7 @@ class OllamaBackend(Backend):
         stream: bool = False, 
         tools = [],
         max_tokens: int = 500, 
-        params: GenerationParams = PRECISE_PARAMS, mm_processor_kwargs={}
+        params: GenerationParams = PRECISE_PARAMS, mm_processor_kwargs={}, extra={}
     ) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
         """
         Use the shared OpenAI client for chat completions with generation parameters.
@@ -258,6 +258,12 @@ class OllamaBackend(Backend):
             "mirostat_tau": 5,
             "mirostat_eta": 0.1,
         }
+        
+        if "response_format" in extra:
+            extra_body["response_format"] = extra["response_format"]
+        
+        if "json_schema" in extra:
+            extra_body["json_schema"] = extra["json_schema"]
 
         try:
             if stream:

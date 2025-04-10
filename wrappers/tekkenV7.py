@@ -89,7 +89,7 @@ class TekkenV7:
             # No tool calls, just content
             return text.strip() if text.strip() else None, []
     
-    async def chat_completion(self, conversation: List[Dict[str, Any]], stream: bool = False, tools = [], max_tokens: int = 500, params: GenerationParams = PRECISE_PARAMS, mm_processor_kwargs={}) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
+    async def chat_completion(self, conversation: List[Dict[str, Any]], stream: bool = False, tools = [], max_tokens: int = 500, params: GenerationParams = PRECISE_PARAMS, mm_processor_kwargs={}, extra={}) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
         tokenizer = MistralTokenizer.v7()
 
         messages = []
@@ -169,13 +169,13 @@ class TekkenV7:
 
         if stream:
             # Return the async generator directly
-            return await self._create_stream_iterator(text, max_tokens, params)
+            return await self._create_stream_iterator(text, max_tokens, params, extra)
         else:
-            return await self._non_stream_chat_completion(text, max_tokens, params)
+            return await self._non_stream_chat_completion(text, max_tokens, params, extra)
     
-    async def _non_stream_chat_completion(self, prompt: str, max_tokens, params: GenerationParams) -> Dict[str, Any]:
+    async def _non_stream_chat_completion(self, prompt: str, max_tokens, params: GenerationParams, extra={}) -> Dict[str, Any]:
         """Handle non-streaming completion requests."""
-        response = await self.backend.completion(prompt, stream=False, max_tokens=max_tokens, params=params)
+        response = await self.backend.completion(prompt, stream=False, max_tokens=max_tokens, params=params, extra=extra)
 
         # Get the completion text and check finish reason
         completion_text = self._replace_special_chars(response['choices'][0]['text'])
@@ -250,10 +250,10 @@ class TekkenV7:
             }
         }
     
-    async def _create_stream_iterator(self, prompt: str, max_tokens, params: GenerationParams) -> AsyncIterator[Dict[str, Any]]:
+    async def _create_stream_iterator(self, prompt: str, max_tokens, params: GenerationParams, extra={}) -> AsyncIterator[Dict[str, Any]]:
         """Create and return an async iterator for streaming responses."""
         async def stream_generator():
-            stream = await self.backend.completion(prompt, stream=True, max_tokens=max_tokens, params=params)
+            stream = await self.backend.completion(prompt, stream=True, max_tokens=max_tokens, params=params, extra=extra)
 
             accumulated_text = ""
             content_complete = False
