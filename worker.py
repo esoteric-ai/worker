@@ -671,7 +671,7 @@ class WorkerClient:
         Submit completed tasks in batches.
         """
         batch = []
-        flush_interval = 5
+        flush_interval = 0.1
 
         while True:
             try:
