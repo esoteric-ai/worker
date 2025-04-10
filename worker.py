@@ -712,7 +712,7 @@ class WorkerClient:
         producer_task = asyncio.create_task(self.producer_loop())
         consumer_task = asyncio.create_task(self.consumer_loop())
         submit_task = asyncio.create_task(self.submit_loop())
-        metrics_task = asyncio.create_task(self.metrics_loop())
+        # metrics_task = asyncio.create_task(self.metrics_loop())
 
         reconnect_attempt = 0
         while True:
