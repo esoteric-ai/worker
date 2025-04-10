@@ -92,8 +92,8 @@ class OllamaBackend(Backend):
 
         # Check if model config has api_url and use it instead of default base_url
         base_url = self.config.get("base_url")
-        if "api_url" in model:
-            base_url = model.get("api_url")
+        if "api_url" in model.get("load_options", {}):
+            base_url = model['load_options'].get("api_url")
             print(f"[OllamaBackend] Using model-specific API URL: {base_url}")
         
         # Create OpenAI client with the appropriate base URL

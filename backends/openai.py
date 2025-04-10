@@ -25,8 +25,9 @@ class OpenAIBackend(Backend):
         
         # Check for model-specific API URL first, then fall back to config
         base_url = None
-        if "api_url" in model:
-            base_url = model.get("api_url")
+        
+        if "api_url" in model.get("load_options", {}):
+            base_url = model['load_options'].get("api_url")
             print(f"[OpenAIBackend] Using model-specific API URL: {base_url}")
         elif self.config.get("api_base"):
             base_url = self.config["api_base"]
