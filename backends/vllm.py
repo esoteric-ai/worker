@@ -96,7 +96,7 @@ class VllmBackend(Backend):
             # Wait for startup to complete or timeout after 120 seconds
             print(f"[VllmBackend] Waiting for model {api_name} to initialize...")
             try:
-                await asyncio.wait_for(startup_complete.wait(), 120)
+                await asyncio.wait_for(startup_complete.wait(), 999999)
                 print(f"[VllmBackend] Model startup complete detected")
             except asyncio.TimeoutError:
                 print(f"[VllmBackend] Model startup timeout - continuing anyway")
