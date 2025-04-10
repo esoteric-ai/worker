@@ -119,7 +119,7 @@ class OllamaBackend(Backend):
                     "num_ctx": context_length
                 }
             }
-
+            print("ollama api", f"{base_url.rstrip("/")}/api/chat",)
             async with httpx.AsyncClient(timeout=None) as client:
                 base_url = base_url.rstrip("/")
                 response = await client.post(
