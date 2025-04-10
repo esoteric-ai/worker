@@ -121,7 +121,7 @@ class OllamaBackend(Backend):
             }
 
             async with httpx.AsyncClient(timeout=None) as client:
-                base_url = self.config.get("base_url").rstrip("/")
+                base_url = base_url.rstrip("/")
                 response = await client.post(
                     f"{base_url}/api/chat",
                     json=request_body,
