@@ -339,9 +339,9 @@ class WorkerClient:
                 await backend_instance.real_backend.unload_model()
             else:
                 await backend_instance.backend.unload_model()
-            print(f"[Worker] Unloaded model: {model_alias}. Waiting 3 seconds before loading next one.")
+            print(f"[Worker] Unloaded model: {model_alias}. Waiting 10 seconds before loading next one.")
             
-            await asyncio.sleep(3)
+            await asyncio.sleep(10)
             
             print("[Worker] Unloaded model: {model_alias}. DONE.")
                 
