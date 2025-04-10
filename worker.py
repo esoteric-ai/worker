@@ -49,8 +49,8 @@ class WorkerClient:
         
         self.model_configs: List[ModelConfig] = cfg.get("model_configs", [])
         
-        self.model_locks = set()
-        self.gpu_locks = set()
+        self.model_locks = []
+        self.gpu_locks = []
         
          # Backend configurations
         self.backend_configs = {
@@ -324,11 +324,11 @@ class WorkerClient:
         model_alias = backend_instance.model_alias
         
         # Lock the model before unloading
-        self.model_locks.add(model_alias)
+        self.model_locks.append(model_alias)
         
         gpus_to_lock = backend_instance.loaded_on_gpus
         for gpu_idx in gpus_to_lock:
-            self.gpu_locks.add(gpu_idx)
+            self.gpu_locks.append(gpu_idx)
             print(f"[Worker] Locking GPU {gpu_idx} for unloading model {model_alias}")
         
         
@@ -351,9 +351,9 @@ class WorkerClient:
             return False
         finally:
             # Always remove the lock when done
-            self.model_locks.discard(model_alias)
+            self.model_locks.remove(model_alias)
             for gpu_idx in gpus_to_lock:
-                self.gpu_locks.discard(gpu_idx)
+                self.gpu_locks.remove(gpu_idx)
                 print(f"[Worker] Unlocking GPU {gpu_idx} after unloading model {model_alias}")
 
     async def producer_loop(self):
@@ -587,12 +587,12 @@ class WorkerClient:
                                     model_config = config
                                     break
                             
-                            self.model_locks.add(preferred_model)
+                            self.model_locks.append(preferred_model)
                             print(f"[Consumer] Task {task_id}: Added lock for model {preferred_model}")
                             
                             # Lock the GPUs this model will need
                             for gpu_idx in required_gpus:
-                                self.gpu_locks.add(gpu_idx)
+                                self.gpu_locks.append(gpu_idx)
                                 print(f"[Consumer] Task {task_id}: Added lock for GPU {gpu_idx}")
                             
                             loading_task = asyncio.create_task(self.load_model_for_task({"models": [preferred_model]}))
@@ -608,12 +608,12 @@ class WorkerClient:
                                     except Exception as e:
                                         print(f"[Consumer] Error loading model {model_name}: {e}")
                                     finally:
-                                        self.model_locks.discard(model_name)
+                                        self.model_locks.remove(model_name)
                                         print(f"[Consumer] Removed lock for model {model_name}")
                                         
                                         # Also remove GPU locks
                                         for gpu_idx in gpu_indices:
-                                            self.gpu_locks.discard(gpu_idx)
+                                            self.gpu_locks.remove(gpu_idx)
                                             print(f"[Consumer] Removed lock for GPU {gpu_idx}")
                                 return on_model_loaded
                                     
