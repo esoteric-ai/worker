@@ -25,15 +25,10 @@ class OllamaBackend(Backend):
         config: OllamaBackendConfig,
     ):
         self.config = config
-        
-        self.openai_client = AsyncOpenAI(
-            api_key=self.config.get("api_key") or "-",
-            base_url=f"{self.config.get('base_url')}/v1",
-        )
-        
         self.running = False
         self.pid = None
         self.active_model = None
+        self.openai_client = None
 
     async def _get_pid(self) -> Optional[int]:
         return self.pid
@@ -95,6 +90,18 @@ class OllamaBackend(Backend):
                 self.process = None
                 raise RuntimeError(f"Failed to start Ollama backend: {str(e)}")
 
+        # Check if model config has api_url and use it instead of default base_url
+        base_url = self.config.get("base_url")
+        if "api_url" in model:
+            base_url = model.get("api_url")
+            print(f"[OllamaBackend] Using model-specific API URL: {base_url}")
+        
+        # Create OpenAI client with the appropriate base URL
+        self.openai_client = AsyncOpenAI(
+            api_key=self.config.get("api_key") or "-",
+            base_url=f"{base_url}/v1",
+        )
+        
         try:
             headers = {"Content-Type": "application/json"}
             if self.config.get("api_key"):

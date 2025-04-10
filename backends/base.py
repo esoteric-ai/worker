@@ -23,6 +23,7 @@ class ModelLoadConfig(TypedDict):
     gpu_split: List[int] = [1]
     run_path: Optional[str] = None
     run_arguments: Optional[str] = None
+    api_url: Optional[str] = None
     environment: Optional[Dict[str, str]] = None
     
 class ModelPerformanceMetrics(TypedDict):
