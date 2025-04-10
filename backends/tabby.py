@@ -325,7 +325,6 @@ class TabbyBackend(Backend):
 
         if "response_format" in extra:
             extra_body["response_format"] = extra["response_format"]
-            print(f"Response format: {extra_body['response_format']}")
         
         if "json_schema" in extra:
             extra_body["json_schema"] = extra["json_schema"]
