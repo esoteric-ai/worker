@@ -5,7 +5,7 @@ from openai import AsyncOpenAI
 
 class OpenAIBackendConfig(TypedDict):
     api_key: str
-    api_base: Optional[str]
+    base_url: Optional[str]
 
 class OpenAIBackend(Backend):
     def __init__(self, config: OpenAIBackendConfig):
@@ -32,8 +32,8 @@ class OpenAIBackend(Backend):
         if "api_url" in model.get("load_options", {}):
             base_url = model['load_options'].get("api_url")
             print(f"[OpenAIBackend] Using model-specific API URL: {base_url}")
-        elif self.config.get("api_base"):
-            base_url = self.config["api_base"]
+        elif self.config.get("base_url"):
+            base_url = self.config["base_url"]
         
         if base_url:
             client_kwargs["base_url"] = base_url
