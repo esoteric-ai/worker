@@ -148,8 +148,11 @@ class YandexBackend(Backend):
     
     def _map_yandex_response_to_openai(self, yandex_response: Dict[str, Any]) -> Dict[str, Any]:
         """Convert Yandex response format to OpenAI response format."""
+        # Extract the result object which contains the actual response data
+        result = yandex_response.get("result", {})
+        
         openai_response = {
-            "id": f"yandex-{yandex_response.get('modelVersion', 'unknown')}",
+            "id": f"yandex-{result.get('modelVersion', 'unknown')}",
             "object": "chat.completion",
             "created": int(datetime.now().timestamp()),
             "model": self.model_config.get("api_name", "yandex-model"),
@@ -158,16 +161,16 @@ class YandexBackend(Backend):
         }
         
         # Map usage information
-        if "usage" in yandex_response:
+        if "usage" in result:
             openai_response["usage"] = {
-                "prompt_tokens": int(yandex_response["usage"].get("inputTextTokens", 0)),
-                "completion_tokens": int(yandex_response["usage"].get("completionTokens", 0)),
-                "total_tokens": int(yandex_response["usage"].get("totalTokens", 0))
+                "prompt_tokens": int(result["usage"].get("inputTextTokens", 0)),
+                "completion_tokens": int(result["usage"].get("completionTokens", 0)),
+                "total_tokens": int(result["usage"].get("totalTokens", 0))
             }
         
         # Map alternatives to choices
-        if "alternatives" in yandex_response and yandex_response["alternatives"]:
-            for i, alt in enumerate(yandex_response["alternatives"]):
+        if "alternatives" in result and result["alternatives"]:
+            for i, alt in enumerate(result["alternatives"]):
                 if "message" in alt:
                     choice = {
                         "index": i,
@@ -175,16 +178,19 @@ class YandexBackend(Backend):
                             "role": alt["message"].get("role", "assistant"),
                             "content": alt["message"].get("text", "")
                         },
-                        "finish_reason": alt.get("status", "stop").lower()
+                        "finish_reason": "stop" if alt.get("status") == "ALTERNATIVE_STATUS_FINAL" else "incomplete"
                     }
                     openai_response["choices"].append(choice)
                     
         return openai_response
-    
+
     def _map_yandex_chunk_to_openai(self, yandex_chunk: Dict[str, Any]) -> Dict[str, Any]:
         """Convert Yandex streaming chunk to OpenAI chunk format."""
+        # Extract the result object which contains the actual chunk data
+        result = yandex_chunk.get("result", {})
+        
         openai_chunk = {
-            "id": f"yandex-{yandex_chunk.get('modelVersion', 'unknown')}",
+            "id": f"yandex-{result.get('modelVersion', 'unknown')}",
             "object": "chat.completion.chunk",
             "created": int(datetime.now().timestamp()),
             "model": self.model_config.get("api_name", "yandex-model"),
@@ -192,8 +198,8 @@ class YandexBackend(Backend):
         }
         
         # Map alternatives to choices
-        if "alternatives" in yandex_chunk and yandex_chunk["alternatives"]:
-            for i, alt in enumerate(yandex_chunk["alternatives"]):
+        if "alternatives" in result and result["alternatives"]:
+            for i, alt in enumerate(result["alternatives"]):
                 if "message" in alt:
                     choice = {
                         "index": i,
@@ -204,8 +210,11 @@ class YandexBackend(Backend):
                     if "text" in alt["message"]:
                         choice["delta"]["content"] = alt["message"]["text"]
                     
-                    if "status" in alt and alt["status"] != "PENDING":
-                        choice["finish_reason"] = alt["status"].lower()
+                    if "status" in alt:
+                        if alt["status"] == "ALTERNATIVE_STATUS_FINAL":
+                            choice["finish_reason"] = "stop"
+                        elif alt["status"] != "PENDING":
+                            choice["finish_reason"] = "incomplete"
                         
                     openai_chunk["choices"].append(choice)
                 
