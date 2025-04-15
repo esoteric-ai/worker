@@ -80,6 +80,12 @@ class OpenAIBackend(Backend):
             "frequency_penalty": params.get("frequency_penalty", 0.0),
             "presence_penalty": params.get("presence_penalty", 0.0),
         }
+        
+        if "response_format" in extra:
+            extra_body["response_format"] = extra["response_format"]
+        
+        if "json_schema" in extra:
+            extra_body["json_schema"] = extra["json_schema"]
 
         try:
             if stream:
