@@ -139,6 +139,7 @@ class YandexBackend(Backend):
                         raise Exception(f"Yandex API error: {response.status}, {error_text}")
                     
                     yandex_response = await response.json()
+                    print(yandex_response)
                     return self._map_yandex_response_to_openai(yandex_response)
                     
         except Exception as e:
