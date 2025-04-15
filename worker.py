@@ -17,6 +17,7 @@ from backends.ollama import OllamaBackend, OllamaBackendConfig
 from backends.gigachat import GigaChatBackend, GigaChatBackendConfig
 from backends.vllm import VllmBackend, VllmBackendConfig 
 from backends.openai import OpenAIBackend, OpenAIBackendConfig 
+from backends.yandex import YandexBackend, YandexBackendConfig 
 
 from wrappers.tekkenV7 import TekkenV7
 
@@ -80,6 +81,11 @@ class WorkerClient:
             "OpenAI": OpenAIBackendConfig(
                 base_url=cfg.get("openai_api_url", "http://127.0.0.1"),
                 api_key=cfg.get("openai_api_key")
+            ),
+            "Yandex": YandexBackendConfig(
+                base_url=cfg.get("yandex_api_url", "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"),
+                api_key=cfg.get("yandex_api_key"),
+                folder_id=cfg.get("yandex_folder_id")
             )
         }
         
@@ -145,7 +151,13 @@ class WorkerClient:
                 
             else:
                 backend = real_backend
+        elif backend_type == "Yandex":
+            real_backend = YandexBackend(self.backend_configs["Yandex"])
+            if wrapper_name == "TekkenV7":
+                backend = TekkenV7(real_backend)
                 
+            else:
+                backend = real_backend
         else:
             raise ValueError(f"Unsupported backend: {backend_type}")
             
@@ -755,7 +767,7 @@ class WorkerClient:
         """
         POST /worker/register to get a worker_uid from the server.
         """
-        supported_backend_types = ["TabbyAPI", "Ollama", "Gigachat", "vLLM", "OpenAI"] 
+        supported_backend_types = ["TabbyAPI", "Ollama", "Gigachat", "vLLM", "OpenAI", "Yandex"] 
         
         # Collect GPU information for registration
         gpu_info = []
