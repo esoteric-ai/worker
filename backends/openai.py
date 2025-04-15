@@ -23,6 +23,9 @@ class OpenAIBackend(Backend):
             "api_key": self.config["api_key"]
         }
         
+        if "api_key" in model.get("load_options", {}):
+            client_kwargs["api_key"] = model['load_options'].get("api_key")
+        
         # Check for model-specific API URL first, then fall back to config
         base_url = None
         

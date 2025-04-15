@@ -24,6 +24,7 @@ class ModelLoadConfig(TypedDict):
     run_path: Optional[str] = None
     run_arguments: Optional[str] = None
     api_url: Optional[str] = None
+    api_key: Optional[str] = None
     environment: Optional[Dict[str, str]] = None
     
 class ModelPerformanceMetrics(TypedDict):
