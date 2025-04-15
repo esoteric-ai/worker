@@ -105,6 +105,45 @@ class OpenAIBackend(Backend):
             print(f"ERROR in chat_completion: {type(e).__name__}: {str(e)}")
             # Re-raise to ensure benchmark correctly detects the failure
             raise
+    
+    async def completion(
+        self, 
+        prompt: str,  
+        stream: bool = False, 
+        max_tokens: int = 500, 
+        params: GenerationParams = PRECISE_PARAMS
+    ) -> Union[str, AsyncIterator]:
+        """
+        Convert text completion to chat completion format for OpenAI API.
+        OpenAI has deprecated direct completions in favor of chat completions.
+        """
+        # Convert the text prompt to chat format
+        conversation = [
+            {"role": "user", "content": prompt}
+        ]
         
+        # Use the existing chat_completion method
+        response = await self.chat_completion(
+            conversation=conversation,
+            stream=stream,
+            max_tokens=max_tokens,
+            params=params
+        )
+        
+        if stream:
+            # For streaming, yield the content from each chunk
+            async def content_generator():
+                async for chunk in response:
+                    if "choices" in chunk and chunk["choices"]:
+                        if "delta" in chunk["choices"][0] and "content" in chunk["choices"][0]["delta"]:
+                            yield chunk["choices"][0]["delta"]["content"]
+            
+            return content_generator()
+        else:
+            # For non-streaming, return just the content string
+            if "choices" in response and response["choices"] and "message" in response["choices"][0]:
+                return response["choices"][0]["message"].get("content", "")
+            return ""
+    
     async def _get_pid(self) -> Optional[int]:
         return None
